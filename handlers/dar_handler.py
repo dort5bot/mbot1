@@ -20,7 +20,7 @@ TELEGRAM_NAME = os.getenv("TELEGRAM_NAME", "xbot")  # .env varsa bot adı, yoksa
 ROOT_DIR = '.'
 TELEGRAM_MSG_LIMIT = 4000
 
-# Tüm komutların açıklamaları (command_info.py içeriği buraya taşındı)
+# /dar k komutu handler dosyalarını tarayacak.komutları bu dosyanın içindeki COMMAND_INFO sözlüğü ile eşleştirecek.
 COMMAND_INFO = {
     "dar": "/dar: Dosya tree, /dar k: komut listesi, /dar z:repo zip",
     "io": "In-Out Alış Satış Baskısı raporu",
