@@ -10,12 +10,14 @@ PEP8 + type hints + docstring + async yapı + singleton + logging UYGUN OLACAK
 import os
 import asyncio
 import logging
-from typing import NoReturn
+import nest_asyncio
+
+# Event loop çakışmalarını önlemek için
+nest_asyncio.apply()
 
 from telegram.ext import Application, ApplicationBuilder
 from config import get_config, BinanceConfig
 from utils.handler_loader import load_handlers
-
 
 # Logging yapılandırması
 logging.basicConfig(
@@ -24,70 +26,69 @@ logging.basicConfig(
 )
 logger: logging.Logger = logging.getLogger(__name__)
 
-
 async def start_bot() -> None:
-    """
-    Telegram botu başlatır. Config'i yükler, handler'ları ekler ve uygulamayı çalıştırır.
-
-    Raises:
-        ValueError: API key, secret veya bot token eksik ise
-        Exception: Diğer başlatma hatalarında
-    """
-    # ✅ Config'i yükle (.env ile override edilen singleton yapı)
-    config: BinanceConfig = await get_config()
-
-    # 🔐 GÜVENLİK - .env'den API Key (print etmiyoruz - sadece kontrol)
-    if not config.api_key or not config.secret_key:
-        raise ValueError(
-            "❌ API Key veya Secret eksik! Lütfen .env dosyanızı kontrol edin.\n"
-            "  -> Gerekli alanlar: BINANCE_API_KEY, BINANCE_API_SECRET"
-        )
-
-    logger.info("🔐 API Key ve Secret yüklendi")
-
-    # ⚙️ TECHNICAL - Default değerlerden log
-    logger.info("⚙️ Teknik Ayarlar:")
-    logger.info(f" - Request Timeout: {config.REQUEST_TIMEOUT}")
-    logger.info(f" - Max Requests: {config.MAX_REQUESTS_PER_SECOND}")
-    logger.info(f" - Max Connections: {config.MAX_CONNECTIONS}")
-
-    # 📊 BUSINESS - İzlenen semboller & eşikler
-    logger.info("📊 İzlenecek Semboller:")
-    for symbol in config.SCAN_SYMBOLS:
-        logger.info(f" - {symbol}")
-    logger.info(f"🎯 Fiyat Uyarı Eşiği: %{config.ALERT_PRICE_CHANGE_PERCENT}")
-
-    # ✅ Telegram bot uygulamasını başlat
-    bot_token: str = os.getenv("TELEGRAM_BOT_TOKEN", "")
-    if not bot_token:
-        raise ValueError("❌ TELEGRAM_BOT_TOKEN eksik! .env dosyasını kontrol edin.")
-
-    app: Application = ApplicationBuilder().token(bot_token).build()
-
-    # 🔌 Handler'ları yükle
-    await load_handlers(app)
-
-    logger.info("✅ Tüm handler'lar başarıyla yüklendi. Bot başlatılıyor...")
-
-    # 🚀 Botu çalıştır
-    await app.run_polling()
-
-
-def main() -> NoReturn:
-    """
-    Ana giriş noktası. Async event loop başlatır.
-
-    Bu fonksiyon program sonlanana kadar çalışır.
-    """
+    """Telegram botu başlatır."""
     try:
-        asyncio.run(start_bot())
+        config: BinanceConfig = await get_config()
+
+        if not config.api_key or not config.secret_key:
+            raise ValueError("❌ API Key veya Secret eksik!")
+
+        logger.info("🔐 API Key ve Secret yüklendi")
+
+        # Teknik ayarlar
+        logger.info("⚙️ Teknik Ayarlar:")
+        logger.info(f" - Request Timeout: {config.REQUEST_TIMEOUT}")
+        logger.info(f" - Max Requests: {config.MAX_REQUESTS_PER_SECOND}")
+        logger.info(f" - Max Connections: {config.MAX_CONNECTIONS}")
+
+        # İzlenen semboller
+        logger.info("📊 İzlenecek Semboller:")
+        for symbol in config.SCAN_SYMBOLS:
+            logger.info(f" - {symbol}")
+        logger.info(f"🎯 Fiyat Uyarı Eşiği: %{config.ALERT_PRICE_CHANGE_PERCENT}")
+
+        # Telegram bot token
+        bot_token: str = os.getenv("TELEGRAM_BOT_TOKEN", "")
+        if not bot_token:
+            raise ValueError("❌ TELEGRAM_BOT_TOKEN eksik!")
+
+        # Application oluşturma
+        app: Application = ApplicationBuilder().token(bot_token).build()
+
+        # Handler'ları yükle
+        await load_handlers(app)
+
+        logger.info("✅ Tüm handler'lar başarıyla yüklendi. Bot başlatılıyor...")
+
+        # Botu çalıştır - run_polling yerine manual loop yönetimi
+        await app.initialize()
+        await app.start()
+        await app.updater.start_polling()
+        
+        # Sonsuz döngü
+        while True:
+            await asyncio.sleep(3600)  # Her saat kontrol et
+            
+    except Exception as e:
+        logger.exception(f"🚨 Bot başlatılamadı: {str(e)}")
+        raise
+
+def main() -> None:
+    """Ana giriş noktası."""
+    try:
+        # Mevcut event loop'u kullan
+        loop = asyncio.get_event_loop()
+        loop.run_until_complete(start_bot())
     except KeyboardInterrupt:
         logger.warning("⛔ Bot manuel olarak durduruldu.")
     except Exception as e:
         logger.exception(f"🚨 Bot başlatılamadı: {str(e)}")
     finally:
-        logger.info("Bot kapatılıyor...")
-
+        # Cleanup
+        if 'app' in locals():
+            loop.run_until_complete(app.stop())
+            loop.run_until_complete(app.shutdown())
 
 if __name__ == "__main__":
     main()
