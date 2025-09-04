@@ -27,6 +27,7 @@ utils/
 │   ├── binance_constants.py      # Sabitler ve enum'lar
 │   ├── binance_metrics.py        # Metrik sınıfları
 │   └── binance_exceptions.py     # Özel exception'lar
+│   └── binance_types.py          # ⭐ YENİ: Type definitions
 └── config.py                     # Config yönetimi
 
 
