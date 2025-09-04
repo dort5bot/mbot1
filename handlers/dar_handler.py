@@ -7,6 +7,15 @@
 # /dar t    → Projedeki tüm geçerli dosyaların içeriği tek bir .txt dosyada
 # dosya adi .env den alir TELEGRAM_NAME
 """
+# handlers/dar_handler.py
+"""
+# --------------------------------
+# /dar      → Dosya ağacı (mesaj, uzun olursa TXT)
+# /dar Z    → ZIP (tree.txt + içerikler, sadece listelenen dosyalar + .env + .gitignore)
+# /dar k    → Alfabetik komut listesi (+ açıklamalar)
+# /dar t    → Projedeki tüm geçerli dosyaların içeriği tek bir .txt dosyada
+# dosya adi .env den alir TELEGRAM_NAME
+"""
 
 import asyncio
 import logging
