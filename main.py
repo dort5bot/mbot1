@@ -17,7 +17,7 @@ nest_asyncio.apply()
 
 from telegram.ext import Application, ApplicationBuilder
 from config import get_config, BinanceConfig
-from utils.handler_loader import load_handlers
+from utils.handler_loader import load_handlers, clear_handler_cache, get_loaded_handlers
 
 # Logging yapılandırması
 logging.basicConfig(
@@ -56,8 +56,14 @@ async def start_bot() -> None:
         # Application oluşturma
         app: Application = ApplicationBuilder().token(bot_token).build()
 
-        # Handler'ları yükle
-        await load_handlers(app)
+        # handler_loader Handler'ları yükle
+        await load_handlers(application)
+        # handler_loader Cache'i temizle (yeniden yüklemek için)
+        clear_handler_cache()
+        # handler_loader Yüklenmiş handler'ları listele
+        loaded = get_loaded_handlers()
+        print(f"Loaded handlers: {loaded}")
+
 
         logger.info("✅ Tüm handler'lar başarıyla yüklendi. Bot başlatılıyor...")
 
