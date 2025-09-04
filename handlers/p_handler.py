@@ -9,6 +9,7 @@ import logging
 import os
 from typing import List, Optional, Dict, Any
 from telegram import Update
+from telegram.ext import Application  # Application import edilmeli
 from telegram.ext import CommandHandler, ContextTypes
 from utils.binance.binance_a import get_binance_client
 
@@ -171,7 +172,7 @@ async def p_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text("Bir hata oluştu. Lütfen daha sonra tekrar deneyin.")
 
 
-def register(application) -> None:
+def register(application: Application) -> None:  # Type hint eklenmeli
     """
     Telegram botu için komut işleyicilerini kaydeder.
     
