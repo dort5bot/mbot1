@@ -5,6 +5,7 @@ Kullanım Örnekleri
 /wake d → Deploy tetikler
 /wake c → Cache temizler + deploy tetikler
 /wake q → Kalan compute + build quota bilgisi
+# PEP8 + type hints + docstring + async yapı + singleton + logging + Async Yapı olacak
 """
 
 import os
