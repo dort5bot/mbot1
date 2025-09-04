@@ -4,11 +4,13 @@ main.py - Telegram Bot Ana Giriş Noktası
 🔐 Güvenli yapı: .env ile secret yönetimi
 ⚙️ Katmanlı mimari: Config, handler loader, async yapı
 📦 Modüler yapı: Handler'lar otomatik yüklenir
+PEP8 + type hints + docstring + async yapı + singleton + logging UYGUN OLACAK
 """
 
 import os
 import asyncio
 import logging
+from typing import NoReturn
 
 from telegram.ext import Application, ApplicationBuilder
 from config import get_config, BinanceConfig
@@ -28,7 +30,8 @@ async def start_bot() -> None:
     Telegram botu başlatır. Config'i yükler, handler'ları ekler ve uygulamayı çalıştırır.
 
     Raises:
-        Exception: Config eksikse ya da başlatma sırasında hata oluşursa
+        ValueError: API key, secret veya bot token eksik ise
+        Exception: Diğer başlatma hatalarında
     """
     # ✅ Config'i yükle (.env ile override edilen singleton yapı)
     config: BinanceConfig = await get_config()
@@ -70,9 +73,11 @@ async def start_bot() -> None:
     await app.run_polling()
 
 
-def main() -> None:
+def main() -> NoReturn:
     """
     Ana giriş noktası. Async event loop başlatır.
+
+    Bu fonksiyon program sonlanana kadar çalışır.
     """
     try:
         asyncio.run(start_bot())
@@ -80,6 +85,8 @@ def main() -> None:
         logger.warning("⛔ Bot manuel olarak durduruldu.")
     except Exception as e:
         logger.exception(f"🚨 Bot başlatılamadı: {str(e)}")
+    finally:
+        logger.info("Bot kapatılıyor...")
 
 
 if __name__ == "__main__":
