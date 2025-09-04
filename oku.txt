@@ -11,3 +11,14 @@
 # 4. Token'ı al
 
 
+======main.py için
+import os
+from utils.config import BinanceConfig
+
+# .env'den config oluştur
+config = BinanceConfig.from_env()
+
+# API key'leri .env'den al
+api_key = os.getenv("BINANCE_API_KEY")
+api_secret = os.getenv("BINANCE_API_SECRET")
+========
