@@ -1,3 +1,4 @@
+"""utils/binance/binance_a.py"""
 """Binance API ana aggregator - tek giriş noktası."""
 
 import os
@@ -110,3 +111,4 @@ class BinanceClient:
             "circuit_breaker": self.circuit_breaker.get_status()
 
         }
+
