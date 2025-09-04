@@ -89,10 +89,28 @@ class BinanceConfig:
     ALERT_PRICE_CHANGE_PERCENT: float = 5.0
     MAX_POSITION_SIZE_USD: float = 1000
     TRADING_PAIRS: List[str] = field(default_factory=lambda: ["BTCUSDT", "ETHUSDT"])
+    ENABLE_TRADING: bool = False
+    TRADING_STRATEGY: str = "conservative"
+    MAX_LEVERAGE: int = 3
+    STOP_LOSS_PERCENT: float = 2.0
+    TAKE_PROFIT_PERCENT: float = 5.0
+    TRADING_HOURS: List[str] = field(default_factory=lambda: ["00:00-23:59"])
     
-    # Monitoring
+    # 📊 MONITORING CONFIG
+    MONITORING_INTERVAL: int = 60
+    ENABLE_PRICE_ALERTS: bool = True
+    ENABLE_WHALE_ALERTS: bool = True
+    ALERT_COOLDOWN: int = 300
     WHALE_TRADE_THRESHOLD: float = 100000  # USD
     VOLUME_SPIKE_THRESHOLD: float = 3.0
+
+
+    # 🌐 NETWORK CONFIG - ÖNERİ EKLENDİ
+    PROXY_URL: Optional[str] = None
+    ENABLE_KEEP_ALIVE: bool = True
+    DNS_TIMEOUT: int = 5
+    CONNECT_TIMEOUT: int = 10
+
     
     # Request weights - Sabit değerler
     REQUEST_WEIGHTS: Dict[str, int] = field(default_factory=lambda: {
@@ -132,6 +150,19 @@ class BinanceConfig:
             ALERT_PRICE_CHANGE_PERCENT=float(os.getenv("ALERT_PRICE_CHANGE_PERCENT", "5.0")),
             MAX_POSITION_SIZE_USD=float(os.getenv("MAX_POSITION_SIZE_USD", "1000")),
             TRADING_PAIRS=os.getenv("TRADING_PAIRS", "BTCUSDT,ETHUSDT").split(","),
+
+            # 🔥 TRADING CONFIG
+            ENABLE_TRADING=os.getenv("ENABLE_TRADING", "false").lower() == "true",
+            TRADING_STRATEGY=os.getenv("TRADING_STRATEGY", "conservative"),
+            MAX_LEVERAGE=int(os.getenv("MAX_LEVERAGE", "3")),
+            
+            # 📊 MONITORING CONFIG
+            MONITORING_INTERVAL=int(os.getenv("MONITORING_INTERVAL", "60")),
+            ENABLE_PRICE_ALERTS=os.getenv("ENABLE_PRICE_ALERTS", "true").lower() == "true",
+            
+            # 🌐 NETWORK CONFIG 
+            PROXY_URL=os.getenv("PROXY_URL"),
+            ENABLE_KEEP_ALIVE=os.getenv("ENABLE_KEEP_ALIVE", "true").lower() == "true",
         )
     
     def validate(self):
@@ -154,3 +185,4 @@ def get_config() -> BinanceConfig:
     config = BinanceConfig.from_env()
     config.validate()
     return config
+
