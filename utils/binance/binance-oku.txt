@@ -49,3 +49,167 @@ Detaylı logging
 Metrics collection
 Environment-based config
 
+
+
+#===================================================
+
+Kullanım Örneği
+🎯🎯🎯🎯🎯--------------------------------
+import asyncio
+import logging
+from utils.binance import BinanceClient, BinanceConfig
+
+logging.basicConfig(level=logging.INFO)
+
+async def main():
+    config = BinanceConfig.from_env()
+    
+    async with BinanceClient(
+        api_key="your_api_key",
+        secret_key="your_secret_key",
+        config=config
+    ) as client:
+        
+        # Public API kullanımı
+        price = await client.get_symbol_price("BTCUSDT")
+        print(f"BTC Price: {price['price']}")
+        
+        # WebSocket kullanımı
+        async def handle_ticker(data):
+            print(f"Ticker update: {data}")
+        
+        await client.ws_ticker("btcusdt", handle_ticker)
+        await asyncio.sleep(10)  # 10 saniye dinle
+
+if __name__ == "__main__":
+    asyncio.run(main())
+
+🎯🎯🎯🎯🎯-------------------------------------
+
+Bu örnek, Binance API'ye bağlanarak kripto para verilerini çekmek ve WebSocket üzerinden gerçek zamanlı veri almakla ilgilidir. İşte detaylı açıklama:
+
+📌 NE YAPIYOR?
+Binance API'ye Bağlanıyor:
+Binance'in resmi API'sine bağlanıyor
+REST API üzerinden anlık fiyat verisi çekiyor
+WebSocket üzerinden gerçek zamanlı veri akışı başlatıyor
+Hangi Verileri Alıyor:
+BTCUSDT sembolünün anlık fiyatı
+Aynı sembolün gerçek zamanlı ticker verileri (fiyat değişimleri, hacim, vs.)
+
+🎯 KULLANIM ALANLARI
+🎯🎯-1. Kripto Para Botları 🤖
+python
+# Trading bot örneği
+async def trading_strategy(client):
+    price = await client.get_symbol_price("BTCUSDT")
+    if float(price['price']) < 50000:
+        # Alım emri ver
+        order = await client.place_order(
+            symbol="BTCUSDT", 
+            side="BUY", 
+            type_="MARKET", 
+            quantity=0.001
+        )
+
+
+
+🎯🎯-2. Fiyat İzleme & Alarm Sistemleri ⏰
+
+# Price alert örneği
+async def price_alert(client, symbol, threshold):
+    async def check_price(data):
+        if float(data['c']) > threshold:
+            print(f"ALARM! {symbol} {threshold} üzerinde: {data['c']}")
+    
+    await client.ws_ticker(symbol.lower(), check_price)
+
+
+
+🎯🎯-3. Veri Analizi & Grafikleme 📊
+
+# Teknik analiz örneği
+async def technical_analysis(client):
+    # 1 saatlik kline verilerini al
+    klines = await client.get_klines_dataframe(
+        "BTCUSDT", 
+        interval="1h", 
+        limit=100
+    )
+    
+    # Moving average hesapla
+    klines['MA20'] = klines['close'].rolling(window=20).mean()
+    print(klines.tail())
+
+
+
+🎯🎯-4. Portföy Takibi 💼
+
+# Portfolio monitoring
+async def portfolio_tracker(client):
+    balances = await client.get_account_balance()
+    for balance in balances['balances']:
+        if float(balance['free']) > 0:
+            print(f"{balance['asset']}: {balance['free']}")
+
+
+
+🎯🎯-🔧 TEKNİK DETAYLAR
+Environment Variables (.env)
+env
+BINANCE_API_KEY=your_api_key_here
+BINANCE_API_SECRET=your_secret_key_here
+BINANCE_BASE_URL=https://api.binance.com
+BINANCE_REQUEST_TIMEOUT=30
+WebSocket Events 📡
+Örnekteki handle_ticker fonksiyonu şu verileri alır:
+
+json
+{
+  "e": "24hrTicker",  // Event type
+  "s": "BTCUSDT",     // Symbol
+  "c": "50123.45",    // Current price
+  "h": "50200.00",    // High price
+  "l": "49900.00",    // Low price
+  "v": "1234.56",     // Volume
+  "q": "62500000"     // Quote volume
+}
+🚀 GERÇEK DÜNYA KULLANIM SENARYOLARI
+Senaryo 1: Arbitraj Botu
+python
+async def arbitrage_bot(client):
+    # Binance ve diğer borsalardaki fiyat farkını bul
+    binance_price = await client.get_symbol_price("BTCUSDT")
+    # Diğer borsa API'sinden fiyat al
+    # Fiyat farkından kar etmeye çalış
+Senaryo 2: Social Trading
+python
+async def copy_trading(client):
+    # Başarılı trader'ların işlemlerini takip et
+    # WebSocket ile gerçek zamanlı pozisyonları izle
+    # Otomatik olarak aynı işlemleri yap
+Senaryo 3: Market Maker
+python
+async def market_making(client):
+    # Order book'taki spread'i sürekli izle
+    # Her iki tarafta da (alış-satış) limit emirleri ver
+    # Spread'ten küçük kazançlar elde et
+⚠️ ÖNEMLİ NOTLAR
+API Limitleri: Binance'in rate limit'lerine dikkat edin
+WebSocket Bağlantıları: Çok fazla WebSocket bağlantısı açmayın
+Hata Yönetimi: Tüm API çağrılarını try-except ile sarmalayın
+Güvenlik: API key'lerinizi güvende tutun
+
+📈 ÇIKTILAR
+Terminal Çıktısı Örneği:
+
+text
+BTC Price: 50123.45
+Ticker update: {'e': '24hrTicker', 's': 'BTCUSDT', 'c': '50125.00', ...}
+Ticker update: {'e': '24hrTicker', 's': 'BTCUSDT', 'c': '50130.00', ...}
+Bu örnek, kripto para trading botları, fiyat izleme sistemleri, ve finansal analiz araçları geliştirmek isteyenler için temel bir başlangıç noktasıdır. 🚀
+
+
+
+🎯🎯🎯
+
