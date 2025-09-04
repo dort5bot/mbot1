@@ -4,7 +4,7 @@ main.py - Telegram Bot Ana Giriş Noktası
 🔐 Güvenli yapı: .env ile secret yönetimi
 ⚙️ Katmanlı mimari: Config, handler loader, async yapı
 📦 Modüler yapı: Handler'lar otomatik yüklenir
-PEP8 + type hints + docstring + async yapı + singleton + logging UYGUN OLACAK
+# PEP8 + type hints + docstring + async yapı + singleton + logging + Async Yapı olacak
 """
 
 import os
