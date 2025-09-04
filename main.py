@@ -11,7 +11,7 @@ import logging
 
 from telegram.ext import Application, ApplicationBuilder
 
-from .config import get_config, BinanceConfig
+from ..config import get_config, BinanceConfig
 from utils.handler_loader import load_handlers
 
 
