@@ -39,7 +39,6 @@ bot/
 │   ├── notification_service.py
 │   └── cache_service.py
 ├── utils/
-│   ├── config
 │   ├── binance/
 │   │   ├── __init__.py
 │   │   ├── binance_a.py
