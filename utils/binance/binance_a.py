@@ -15,7 +15,8 @@ from .binance_circuit_breaker import CircuitBreaker  # ⬅️ Sadece CircuitBrea
 from .binance_utils import klines_to_dataframe
 from .binance_exceptions import BinanceAPIError
 from .binance_metrics import AdvancedMetrics
-from ..config import get_config
+from config import get_config
+
 
 class BinanceClient:
     """Binance API'sine erişim için ana istemci sınıfı"""
@@ -205,3 +206,4 @@ class BinanceClient:
             metrics["advanced_metrics"] = self.advanced_metrics.__dict__
             
         return metrics
+
