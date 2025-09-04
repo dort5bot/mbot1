@@ -1,0 +1,27 @@
+yapı modüler yapıldı
+
+utils/
+├── binance/
+│   ├── __init__.py
+│   ├── binance_a.py              # Ana aggregator
+│   ├── binance_request.py        # HTTP request mekanizması
+│   ├── binance_public.py         # Public endpoints
+│   ├── binance_private.py        # Private endpoints (API key gerektiren)
+│   ├── binance_websocket.py      # WebSocket yönetimi
+│   ├── binance_circuit_breaker.py # Circuit breaker pattern
+│   ├── binance_utils.py          # Yardımcı fonksiyonlar
+│   ├── binance_constants.py      # Sabitler ve enum'lar
+│   ├── binance_metrics.py        # Metrik sınıfları
+│   └── binance_exceptions.py     # Özel exception'lar
+└── config.py                     # Config yönetimi
+
+
+
+analysis/, handler/ sadece binance_a.py üzerinden erişir
+Her modüle tutarlı hata yönetimi
+Merkezi bir config yapısı
+Public endpoint'ler için cache
+Tüm modüller için merkezi logging
+
+
+
