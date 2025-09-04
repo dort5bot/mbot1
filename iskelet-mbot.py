@@ -68,7 +68,7 @@ Scalability: Yeni özellikler kolayca eklenebilir
 │ 	│   ├── risk.py            # G. Risk Yönetimi (BETA - Koruma)					
 │ 	│   └── score.py           # Final skor birleştirme → tek referans noktası handler direkt buradan çağırır					
 │ 	│
-│   └── ...
+│   └── handler_loader.py      # otomotik handler yükleyici
 │ 
 │ 
   
