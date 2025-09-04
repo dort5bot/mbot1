@@ -1,3 +1,12 @@
+⚠️ ÖNEMLİ NOTLAR
+API Limitleri: Binance'in rate limit'lerine dikkat edin
+WebSocket Bağlantıları: Çok fazla WebSocket bağlantısı açmayın
+Hata Yönetimi: Tüm API çağrılarını try-except ile sarmalayın
+Güvenlik: API key'lerinizi güvende tutun
+
+
+⚠️ ⚠️ ⚠️ ⚠️ ⚠️ ⚠️ ⚠️ ⚠️ 
+
 Bu yapı orta/büyük ölçekli async Telegram bot için uygun ve tüm Binance API endpoint'lerini desteklemektedir.
 
 Binance API modülünü inceleyip modüler bir yapıda
