@@ -6,13 +6,15 @@ main.py - Telegram Bot Ana Giriş Noktası
 📦 Modüler yapı: Handler'lar otomatik yüklenir
 # PEP8 + type hints + docstring + async yapı + singleton + logging + Async Yapı olacak
 """
-
+# main.py - Güncellenmiş sürüm
 import os
 import asyncio
 import logging
 import nest_asyncio
+import sys
 
 from telegram.ext import Application, ApplicationBuilder
+from telegram.error import Conflict
 from config import get_config, BinanceConfig
 from utils.handler_loader import load_handlers, clear_handler_cache, get_loaded_handlers
 
@@ -37,18 +39,6 @@ async def start_bot() -> None:
 
         logger.info("🔐 API Key ve Secret yüklendi")
 
-        # Teknik ayarlar
-        logger.info("⚙️ Teknik Ayarlar:")
-        logger.info(f" - Request Timeout: {config.REQUEST_TIMEOUT}")
-        logger.info(f" - Max Requests: {config.MAX_REQUESTS_PER_SECOND}")
-        logger.info(f" - Max Connections: {config.MAX_CONNECTIONS}")
-
-        # İzlenen semboller
-        logger.info("📊 İzlenecek Semboller:")
-        for symbol in config.SCAN_SYMBOLS:
-            logger.info(f" - {symbol}")
-        logger.info(f"🎯 Fiyat Uyarı Eşiği: %{config.ALERT_PRICE_CHANGE_PERCENT}")
-
         # Telegram bot token
         bot_token: str = os.getenv("TELEGRAM_BOT_TOKEN", "")
         if not bot_token:
@@ -65,9 +55,25 @@ async def start_bot() -> None:
 
         logger.info("✅ Tüm handler'lar başarıyla yüklendi. Bot başlatılıyor...")
 
-        # ✅ Çakışmayı önleyen doğru polling
-        await app.run_polling()
+        # Çakışma kontrolü ile polling
+        await app.run_polling(
+            drop_pending_updates=True,  # Bekleyen güncellemeleri temizle
+            allowed_updates=None,       # Tüm güncelleme türlerini al
+            close_loop=False            # Loop'u kapatma
+        )
 
+    except Conflict as e:
+        logger.error("❌ Bot zaten çalışıyor! Lütfen diğer örnekleri kapatın.")
+        logger.error(f"Conflict details: {e}")
+        # Webhook'u temizlemeyi dene
+        try:
+            async with app:
+                await app.bot.delete_webhook(drop_pending_updates=True)
+                logger.info("Webhook temizlendi, 10 saniye bekleyip tekrar deneyin...")
+                await asyncio.sleep(10)
+        except:
+            pass
+        sys.exit(1)
     except Exception as e:
         logger.exception(f"🚨 Bot başlatılamadı: {str(e)}")
         raise
@@ -76,10 +82,27 @@ async def start_bot() -> None:
 def main() -> None:
     """Ana giriş noktası."""
     try:
-        loop = asyncio.get_event_loop()
-        loop.run_until_complete(start_bot())
+        # Mevcut bot işlemlerini kontrol et
+        logger.info("🤖 Bot başlatılıyor...")
+        
+        # Asyncio event loop yönetimi
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            
+        if loop.is_running():
+            logger.info("Event loop zaten çalışıyor, doğrudan başlatılıyor...")
+            loop.create_task(start_bot())
+        else:
+            logger.info("Event loop başlatılıyor...")
+            loop.run_until_complete(start_bot())
+            
     except KeyboardInterrupt:
         logger.warning("⛔ Bot manuel olarak durduruldu.")
+    except Conflict as e:
+        logger.error("❌ Bot çakışması! Lütfen diğer bot örneklerini kapatın.")
     except Exception as e:
         logger.exception(f"🚨 Bot başlatılamadı: {str(e)}")
 
