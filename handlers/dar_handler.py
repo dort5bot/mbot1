@@ -177,4 +177,4 @@ async def dar_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             logger.exception("TXT dosyası oluşturulurken hata")
             await update.message.reply_text(f"Hata oluştu: {e}")
         finally:
-            if os.path.exists(txt_filename
+            if os.path.exists(txt_filename)
