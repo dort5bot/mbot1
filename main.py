@@ -6,6 +6,7 @@ main.py - Telegram Bot Ana Giriş Noktası
 📦 Modüler yapı: Handler'lar otomatik yüklenir
 """
 
+import os
 import asyncio
 import logging
 
