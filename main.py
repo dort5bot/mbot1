@@ -16,7 +16,7 @@ from telegram.ext import Application, ApplicationBuilder
 from config import get_config, BinanceConfig
 from utils.handler_loader import load_handlers, clear_handler_cache, get_loaded_handlers
 
-# Event loop çakışmalarını önlemek için (import'tan sonra)
+# Event loop çakışmalarını önlemek için
 nest_asyncio.apply()
 
 # Logging yapılandırması
@@ -26,9 +26,9 @@ logging.basicConfig(
 )
 logger: logging.Logger = logging.getLogger(__name__)
 
+
 async def start_bot() -> None:
     """Telegram botu başlatır."""
-    app = None
     try:
         config: BinanceConfig = await get_config()
 
@@ -55,33 +55,23 @@ async def start_bot() -> None:
             raise ValueError("❌ TELEGRAM_BOT_TOKEN eksik!")
 
         # Application oluşturma
-        app = ApplicationBuilder().token(bot_token).build()
+        app: Application = ApplicationBuilder().token(bot_token).build()
 
-        # handler_loader Handler'ları yükle
+        # handler_loader
         await load_handlers(app)
-        # handler_loader Cache'i temizle (yeniden yüklemek için)
         clear_handler_cache()
-        # handler_loader Yüklenmiş handler'ları listele
         loaded = get_loaded_handlers()
         logger.info(f"Loaded handlers: {loaded}")
 
         logger.info("✅ Tüm handler'lar başarıyla yüklendi. Bot başlatılıyor...")
 
-        # Botu çalıştır - run_polling yerine manual loop yönetimi
-        await app.initialize()
-        await app.start()
-        await app.updater.start_polling()
-        
-        # Sonsuz döngü
-        while True:
-            await asyncio.sleep(3600)  # Her saat kontrol et
-            
+        # ✅ Çakışmayı önleyen doğru polling
+        await app.run_polling()
+
     except Exception as e:
         logger.exception(f"🚨 Bot başlatılamadı: {str(e)}")
-        if app:
-            await app.stop()
-            await app.shutdown()
         raise
+
 
 def main() -> None:
     """Ana giriş noktası."""
@@ -92,6 +82,7 @@ def main() -> None:
         logger.warning("⛔ Bot manuel olarak durduruldu.")
     except Exception as e:
         logger.exception(f"🚨 Bot başlatılamadı: {str(e)}")
+
 
 if __name__ == "__main__":
     main()
