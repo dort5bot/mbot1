@@ -1,4 +1,5 @@
 #♦️requirements.txt
+aiolimiter
 aiohttp>=3.8.0
 binance-connector>=3.0.0
 ccxt>=4.2.48
