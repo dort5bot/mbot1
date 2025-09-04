@@ -5,7 +5,7 @@ Separation of Concerns: İş mantığı, veri erişimi ve presentation katmanlar
 Modülerlik: Her modül bağımsız çalışabilir
 Scalability: Yeni özellikler kolayca eklenebilir
 
-├── bot/
+proje(telegram botu)/
 ├── __init__.py
 ├── main.py
 ├── config.py
