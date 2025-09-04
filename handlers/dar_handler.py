@@ -14,7 +14,7 @@ from telegram import Update
 from telegram.ext import ContextTypes, CommandHandler
 from dotenv import load_dotenv
 
-from handlers.command_info import COMMAND_INFO  # ✅ komut açıklamaları import edildi
+from handlers.DAR_INFO import DAR_INFO  # ✅ komut açıklamaları import edildi
 
 load_dotenv()  # .env dosyasını yükle
 TELEGRAM_NAME = os.getenv("TELEGRAM_NAME", "xbot")  # .env varsa bot adı, yoksa "xbot"
@@ -123,14 +123,14 @@ def scan_handlers_for_commands():
                 content = f.read()
             matches = handler_pattern.findall(content)
             for cmd in matches:
-                desc = COMMAND_INFO.get(cmd.lower(), "(?)")
+                desc = DAR_INFO.get(cmd.lower(), "(?)")
                 commands[f"/{cmd}"] = f"{desc} ({fname})"
             matches_var = var_handler_pattern.findall(content)
             if "COMMAND" in matches_var:
                 cmd_match = command_pattern.search(content)
                 if cmd_match:
                     cmd = cmd_match.group(1)
-                    desc = COMMAND_INFO.get(cmd.lower(), "(?)")
+                    desc = DAR_INFO.get(cmd.lower(), "(?)")
                     commands[f"/{cmd}"] = f"{desc} ({fname})"
         except Exception:
             continue
