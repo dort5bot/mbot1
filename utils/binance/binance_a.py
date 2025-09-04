@@ -51,6 +51,7 @@ class BinanceClient:
         await self.close()
 
     # Public API methods
+    #---------------------
     async def get_server_time(self) -> Dict[str, Any]:
         return await self.public.get_server_time()
 
@@ -71,6 +72,7 @@ class BinanceClient:
         return klines_to_dataframe(klines)
 
     # Private API methods
+    #---------------------
     async def get_account_info(self) -> Dict[str, Any]:
         return await self.private.get_account_info()
 
@@ -82,6 +84,7 @@ class BinanceClient:
         return await self.private.place_order(symbol, side, type_, quantity, price)
 
     # WebSocket methods
+    #---------------------
     async def ws_ticker(self, symbol: str, callback: Callable[[Dict[str, Any]], Any]) -> None:
         stream_name = f"{symbol.lower()}@ticker"
         await self.ws_manager.subscribe(stream_name, callback)
@@ -105,4 +108,5 @@ class BinanceClient:
             "http": self.http.metrics.__dict__,
             "websocket": self.ws_manager.get_metrics().__dict__,
             "circuit_breaker": self.circuit_breaker.get_status()
+
         }
