@@ -12,12 +12,12 @@ import asyncio
 import logging
 import nest_asyncio
 
-# Event loop çakışmalarını önlemek için
-nest_asyncio.apply()
-
 from telegram.ext import Application, ApplicationBuilder
 from config import get_config, BinanceConfig
 from utils.handler_loader import load_handlers, clear_handler_cache, get_loaded_handlers
+
+# Event loop çakışmalarını önlemek için (import'tan sonra)
+nest_asyncio.apply()
 
 # Logging yapılandırması
 logging.basicConfig(
@@ -28,6 +28,7 @@ logger: logging.Logger = logging.getLogger(__name__)
 
 async def start_bot() -> None:
     """Telegram botu başlatır."""
+    app = None
     try:
         config: BinanceConfig = await get_config()
 
@@ -54,16 +55,15 @@ async def start_bot() -> None:
             raise ValueError("❌ TELEGRAM_BOT_TOKEN eksik!")
 
         # Application oluşturma
-        app: Application = ApplicationBuilder().token(bot_token).build()
+        app = ApplicationBuilder().token(bot_token).build()
 
         # handler_loader Handler'ları yükle
-        await load_handlers(app)  # Application nesnesi 'app' olarak tanımlanmış
+        await load_handlers(app)
         # handler_loader Cache'i temizle (yeniden yüklemek için)
         clear_handler_cache()
         # handler_loader Yüklenmiş handler'ları listele
         loaded = get_loaded_handlers()
-        print(f"Loaded handlers: {loaded}")
-
+        logger.info(f"Loaded handlers: {loaded}")
 
         logger.info("✅ Tüm handler'lar başarıyla yüklendi. Bot başlatılıyor...")
 
@@ -78,23 +78,20 @@ async def start_bot() -> None:
             
     except Exception as e:
         logger.exception(f"🚨 Bot başlatılamadı: {str(e)}")
+        if app:
+            await app.stop()
+            await app.shutdown()
         raise
 
 def main() -> None:
     """Ana giriş noktası."""
     try:
-        # Mevcut event loop'u kullan
         loop = asyncio.get_event_loop()
         loop.run_until_complete(start_bot())
     except KeyboardInterrupt:
         logger.warning("⛔ Bot manuel olarak durduruldu.")
     except Exception as e:
         logger.exception(f"🚨 Bot başlatılamadı: {str(e)}")
-    finally:
-        # Cleanup
-        if 'app' in locals():
-            loop.run_until_complete(app.stop())
-            loop.run_until_complete(app.shutdown())
 
 if __name__ == "__main__":
     main()
