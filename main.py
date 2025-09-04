@@ -4,6 +4,7 @@
 
 """
 from utils.config import get_config
+from utils.handler_loader import load_handlers    #plugin handler loader
 
 def main():
     # ✅ Config'i yükle (default değerler + .env override'lar)
@@ -23,6 +24,11 @@ def main():
     # Örnek: Tüm symbol'leri tarama
     for symbol in config.SCAN_SYMBOLS:
         print(f"Scanning: {symbol}")
+
+    
+    # Handler yükle
+    load_handlers(app)
+
 
 if __name__ == "__main__":
     main()
