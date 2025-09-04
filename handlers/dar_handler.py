@@ -178,3 +178,33 @@ async def dar_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             await update.message.reply_text(f"Hata oluştu: {e}")
         finally:
             if os.path.exists(txt_filename):
+                os.remove(txt_filename)
+        return
+
+    if mode == "z":
+        zip_filename = f"{TELEGRAM_NAME}_{timestamp}.zip"
+        try:
+            zip_path = await create_zip_with_tree_and_files(ROOT_DIR, zip_filename)
+            with open(zip_path, 'rb') as f:
+                await update.message.reply_document(document=f, filename=zip_filename)
+        except Exception as e:
+            logger.exception("ZIP dosyası oluşturulurken hata")
+            await update.message.reply_text(f"Hata oluştu: {e}")
+        finally:
+            if os.path.exists(zip_filename):
+                os.remove(zip_filename)
+        return
+
+    # Mod yoksa veya geçersizse sadece tree göster
+    if len(tree_text) > TELEGRAM_MSG_LIMIT:
+        txt_filename = f"tree_{timestamp}.txt"
+        with open(txt_filename, 'w', encoding='utf-8') as f:
+            f.write(tree_text)
+        with open(txt_filename, 'rb') as f:
+            await update.message.reply_document(document=f, filename=txt_filename)
+        os.remove(txt_filename)
+    else:
+        await update.message.reply_text(f"<pre>{tree_text}</pre>", parse_mode="HTML")
+
+
+dar_handler = CommandHandler("dar", dar_command)
