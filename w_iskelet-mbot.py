@@ -25,23 +25,26 @@ proje(telegram botu)/
 │   │   └── tremo_handler.py
 │   │ 
 │   ├── p_handler.py 
-│   ├── dar_handler.py  
+│   ├── dar_handler.py  #/dar + dosya bilgileri tek kod yapısında
 │   └── error_handler.py # ⭐ YENİ: Hata yönetimi
-│   │ 
+│   
+│   
 ├── services/# ⭐ Business logic katmanı
 │   ├── __init__.py
 │   ├── binance_service.py    # Binance operasyonlarını sarmalar
 │   ├── analysis_service.py   # Analiz işlemlerini yönetir
 │   ├── notification_service.py # Bildirim yönetimi
 │   └── cache_service.py      # Önbellek yönetimi
-│   │ 
+│  
+│   
 ├── models/          # ⭐ Veri modelleri
 │   ├── __init__.py
 │   ├── user.py           # Kullanıcı modeli
 │   ├── analysis_result.py # Analiz sonuç modeli
 │   ├── market_data.py    # Piyasa veri modeli
 │   └── enums.py          # Enum'lar
-│   │ 
+│
+│   
 ├── utils/
 │ 	├── binance/						
 │ 	│   ├── __init__.py						
@@ -56,9 +59,9 @@ proje(telegram botu)/
 │ 	│   ├── binance_metrics.py        # Metrik sınıfları						
 │ 	│   └── binance_exceptions.py     # Özel exception'lar						
 │ 	│   └── binance_types.py          # ⭐ YENİ: Type definitions						
-│ 	│						
+│ 	│				
 │ 	├── analysis/						
-│ 	│	│					
+│ 	│   │					
 │ 	│   ├── tremo.py           # A. Trend & Momentum					
 │ 	│   ├── regime.py          # B. Rejim/Volatilite					
 │ 	│   ├── derivs.py          # C. Derivatives					
@@ -70,7 +73,7 @@ proje(telegram botu)/
 │ 	│
 │   └── handler_loader.py      # otomotik handler yükleyici
 │ 
-│ 
+└── w_iskelet-mbot.py
   
 🔄 Akış Şeması:
 text
