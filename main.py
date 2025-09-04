@@ -57,7 +57,7 @@ async def start_bot() -> None:
         app: Application = ApplicationBuilder().token(bot_token).build()
 
         # handler_loader Handler'ları yükle
-        await load_handlers(application)
+        await load_handlers(app)  # Application nesnesi 'app' olarak tanımlanmış
         # handler_loader Cache'i temizle (yeniden yüklemek için)
         clear_handler_cache()
         # handler_loader Yüklenmiş handler'ları listele
