@@ -5,6 +5,7 @@
 # /dar k    → Alfabetik komut listesi (+ açıklamalar)
 # /dar t  → Projedeki tüm geçerli dosyaların içeriği tek bir .txt dosyada
 # dosya adi .env den alir TELEGRAM_NAME
+# PEP8 + type hints + docstring + async yapı + singleton + logging + Async Yapı olacak
 
 import os
 import re
