@@ -1,0 +1,13 @@
+# Binance API Key almak için:
+# 1. https://www.binance.com adresine git
+# 2. API Management sayfasına git
+# 3. Yeni API Key oluştur
+# 4. Sadece "Spot & Margin Trading" ve "Reading" izinleri ver
+
+# Telegram Bot Token almak için:
+# 1. @BotFather ile konuş
+# 2. /newbot komutunu kullan
+# 3. Bot ismi ve username ver
+# 4. Token'ı al
+
+
