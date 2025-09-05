@@ -11,8 +11,9 @@ import asyncio
 import logging
 import nest_asyncio
 import sys
+import signal
 
-from telegram import Bot    #webhook’u temizle, sadece tek bot örneği çalıştır
+from telegram import Bot    #webhook'u temizle, sadece tek bot örneği çalıştır
 from telegram.ext import Application, ApplicationBuilder
 from telegram.error import Conflict
 from config import get_config, BinanceConfig
@@ -32,10 +33,13 @@ logging.basicConfig(
 logger: logging.Logger = logging.getLogger(__name__)
 
 
-async def start_ping_server() -> None:
+async def start_ping_server() -> web.TCPSite:
     """
     Basit bir HTTP ping endpoint (UptimeRobot için).
     .env içinde ENABLE_PING_SERVER=true ise aktif olur.
+    
+    Returns:
+        web.TCPSite: Başlatılan TCP site objesi
     """
     async def handle(_request: web.Request) -> web.Response:
         return web.Response(text="✅ Bot alive")
@@ -49,10 +53,16 @@ async def start_ping_server() -> None:
     site = web.TCPSite(runner, "0.0.0.0", port)
     await site.start()
     logger.info(f"🌍 Ping server running on port {port}")
+    return site
 
 
-async def start_bot() -> None:
-    """Telegram botu başlatır."""
+async def start_bot() -> Application:
+    """
+    Telegram botu başlatır.
+    
+    Returns:
+        Application: Başlatılan Telegram uygulama objesi
+    """
     try:
         config: BinanceConfig = await get_config()
 
@@ -66,8 +76,7 @@ async def start_bot() -> None:
         if not bot_token:
             raise ValueError("❌ TELEGRAM_BOT_TOKEN eksik!")
 
-        # Mevcut webhook’u temizle
-        bot_token = os.getenv("TELEGRAM_BOT_TOKEN", "")
+        # Mevcut webhook'u temizle
         bot = Bot(token=bot_token)
         await bot.delete_webhook(drop_pending_updates=True)
         
@@ -83,15 +92,38 @@ async def start_bot() -> None:
         logger.info("✅ Tüm handler'lar başarıyla yüklendi. Bot başlatılıyor...")
 
         # Ping server gerekiyorsa başlat
+        ping_site = None
         if os.getenv("ENABLE_PING_SERVER", "false").lower() == "true":
-            asyncio.create_task(start_ping_server())
+            ping_site = await start_ping_server()
+
+        # Graceful shutdown için sinyal handler'ları
+        loop = asyncio.get_event_loop()
+        stop_event = asyncio.Event()
+        
+        def signal_handler():
+            logger.info("🛑 Shutdown sinyali alındı")
+            stop_event.set()
+            
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            loop.add_signal_handler(sig, signal_handler)
 
         # Çakışma kontrolü ile polling
-        await app.run_polling(
-            drop_pending_updates=True,
-            allowed_updates=None,
-            close_loop=False
-        )
+        await app.initialize()
+        await app.start()
+        
+        # Uygulama çalışırken stop_event bekleyin
+        try:
+            await stop_event.wait()
+        finally:
+            logger.info("🔴 Bot durduruluyor...")
+            await app.stop()
+            await app.shutdown()
+            
+            # Ping server'ı durdur
+            if ping_site:
+                await ping_site._runner.cleanup()
+                
+        return app
 
     except Conflict as e:
         logger.error("❌ Bot zaten çalışıyor! Lütfen diğer örnekleri kapatın.")
