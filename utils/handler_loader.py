@@ -4,8 +4,7 @@ Handler Loader
 Telegram bot handler dosyalarını otomatik yüklemek için yardımcı modül.
 Silinen dosyaları otomatik olarak cache'ten temizler.
 Tamamen async uyumlu + PEP8 + type hints + singleton + logging destekler.
-await clear_handler_cache() veya await get_loaded_handlers() şeklinde çağrılır
-
+await clear_handler_cache() veya await get_loaded_handlers() şeklinde çağrılır.
 """
 
 import os
@@ -30,10 +29,6 @@ async def load_handlers(application: Any, path: str = "handlers") -> None:
     Args:
         application (Any): Telegram Application instance.
         path (str, optional): Handler modüllerinin bulunduğu klasör. Varsayılan: "handlers".
-
-    Raises:
-        ImportError: Bir modül yüklenemezse hata loglanır.
-        AttributeError: Modülde register fonksiyonu yoksa hata loglanır.
     """
     global _LOADED_HANDLERS
 
@@ -75,7 +70,7 @@ async def load_handlers(application: Any, path: str = "handlers") -> None:
 
             if callable(register_func):
                 result = register_func(application)
-                if hasattr(result, "__await__"):  # async ise await et
+                if hasattr(result, "__await__"):  # async fonksiyon ise await et
                     await result
                 LOG.info("🟢 Handler loaded: %s", module_name)
                 _LOADED_HANDLERS.add(module_name)
@@ -84,10 +79,6 @@ async def load_handlers(application: Any, path: str = "handlers") -> None:
                     "⚠️ Invalid register function type in handler: %s", module_name
                 )
 
-        except ImportError as exc:
-            LOG.error("❌ Import failed for handler %s: %s", module_name, exc)
-        except AttributeError as exc:
-            LOG.error("❌ Attribute error in handler %s: %s", module_name, exc)
         except Exception as exc:
             LOG.exception("🚨 Failed to load handler %s: %s", module_name, exc)
 
