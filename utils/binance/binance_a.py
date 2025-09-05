@@ -206,4 +206,30 @@ class BinanceClient:
             metrics["advanced_metrics"] = self.advanced_metrics.__dict__
             
         return metrics
+#+p
+
+    async def get_all_24h_tickers(self) -> List[Dict[str, Any]]:
+        """Tüm 24 saatlik ticker verilerini getir."""
+        try:
+            return await self.public.circuit_breaker.execute(
+                self.http._request, "GET", "/api/v3/ticker/24hr"
+            )
+        except Exception as e:
+            self.log.error(f"Error getting all 24h tickers: {e}")
+            return []
+
+
+# --- Singleton Factory ---
+_client_instance: Optional[BinanceClient] = None
+
+def get_binance_client(api_key: Optional[str] = None,
+                       secret_key: Optional[str] = None) -> BinanceClient:
+    """
+    BinanceClient için singleton factory.
+    İlk çağrıda instance oluşturulur, sonrakilerde aynı instance döner.
+    """
+    global _client_instance
+    if _client_instance is None:
+        _client_instance = BinanceClient(api_key, secret_key)
+    return _client_instance
 
