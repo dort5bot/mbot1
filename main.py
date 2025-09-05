@@ -6,7 +6,6 @@ main.py - Telegram Bot Ana Giriş Noktası
 📦 Modüler yapı: Handler'lar otomatik yüklenir
 # PEP8 + type hints + docstring + async yapı + singleton + logging + Async Yapı olacak
 """
-# main.py - Güncellenmiş sürüm
 import os
 import asyncio
 import logging
@@ -18,6 +17,9 @@ from telegram.error import Conflict
 from config import get_config, BinanceConfig
 from utils.handler_loader import load_handlers, clear_handler_cache, get_loaded_handlers
 
+# aiohttp basit ping server
+from aiohttp import web
+
 # Event loop çakışmalarını önlemek için
 nest_asyncio.apply()
 
@@ -27,6 +29,25 @@ logging.basicConfig(
     level=logging.INFO,
 )
 logger: logging.Logger = logging.getLogger(__name__)
+
+
+async def start_ping_server() -> None:
+    """
+    Basit bir HTTP ping endpoint (UptimeRobot için).
+    .env içinde ENABLE_PING_SERVER=true ise aktif olur.
+    """
+    async def handle(_request: web.Request) -> web.Response:
+        return web.Response(text="✅ Bot alive")
+
+    app = web.Application()
+    app.router.add_get("/", handle)
+
+    port = int(os.getenv("PORT", 8080))
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+    logger.info(f"🌍 Ping server running on port {port}")
 
 
 async def start_bot() -> None:
@@ -55,23 +76,26 @@ async def start_bot() -> None:
 
         logger.info("✅ Tüm handler'lar başarıyla yüklendi. Bot başlatılıyor...")
 
+        # Ping server gerekiyorsa başlat
+        if os.getenv("ENABLE_PING_SERVER", "false").lower() == "true":
+            asyncio.create_task(start_ping_server())
+
         # Çakışma kontrolü ile polling
         await app.run_polling(
-            drop_pending_updates=True,  # Bekleyen güncellemeleri temizle
-            allowed_updates=None,       # Tüm güncelleme türlerini al
-            close_loop=False            # Loop'u kapatma
+            drop_pending_updates=True,
+            allowed_updates=None,
+            close_loop=False
         )
 
     except Conflict as e:
         logger.error("❌ Bot zaten çalışıyor! Lütfen diğer örnekleri kapatın.")
         logger.error(f"Conflict details: {e}")
-        # Webhook'u temizlemeyi dene
         try:
             async with app:
                 await app.bot.delete_webhook(drop_pending_updates=True)
                 logger.info("Webhook temizlendi, 10 saniye bekleyip tekrar deneyin...")
                 await asyncio.sleep(10)
-        except:
+        except Exception:
             pass
         sys.exit(1)
     except Exception as e:
@@ -82,10 +106,8 @@ async def start_bot() -> None:
 def main() -> None:
     """Ana giriş noktası."""
     try:
-        # Mevcut bot işlemlerini kontrol et
         logger.info("🤖 Bot başlatılıyor...")
         
-        # Asyncio event loop yönetimi
         try:
             loop = asyncio.get_event_loop()
         except RuntimeError:
@@ -101,7 +123,7 @@ def main() -> None:
             
     except KeyboardInterrupt:
         logger.warning("⛔ Bot manuel olarak durduruldu.")
-    except Conflict as e:
+    except Conflict:
         logger.error("❌ Bot çakışması! Lütfen diğer bot örneklerini kapatın.")
     except Exception as e:
         logger.exception(f"🚨 Bot başlatılamadı: {str(e)}")
