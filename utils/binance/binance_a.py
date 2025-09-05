@@ -1,5 +1,14 @@
 """utils/binance/binance_a.py"""
-"""Binance API ana aggregator - tek giriş noktası."""
+"""Binance API ana aggregator - tek giriş noktası.
+modülün çalışması için gerekli bileşenler 
+
+BinanceHTTPClient (.binance_request):
+CircuitBreaker (.binance_circuit_breaker):
+BinanceAPIError (.binance_exceptions):
+BinanceHTTPClient API-key header eklemeyi destekliyorsa bu sorun olmayacak
+
+alt modüllerle sisim uyunlu olmalıdır
+"""
 
 import os
 import asyncio
@@ -231,3 +240,4 @@ def get_binance_client(api_key: Optional[str] = None,
     if _client_instance is None:
         _client_instance = BinanceClient(api_key, secret_key)
     return _client_instance
+
