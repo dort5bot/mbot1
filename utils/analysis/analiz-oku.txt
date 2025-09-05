@@ -1,0 +1,12 @@
+Market analizi için gerçekten anlamlı private endpointler:
+
+Spot/Futures account balances & positions → borsada açık pozisyonlarını görmek için
+Futures funding rate → piyasa yönü ve sentiment analizi için
+Open orders & order history → kendi trade davranışını analiz etmek için
+Margin account info → kaldıraçlı pozisyon analizi için
+Staking history → locked coin arzını görebilmek (dolaylı etki olabilir)
+  (endpoit eklenmedi) Savings, Earn, Mining Pool → daha çok kullanıcı portföy/gelir yönetimi, market trend analizine doğrudan katkısı yok.
+
+👉 
+Binance’in private API’si sadece senin hesabına özel verileri gösterir.
+Genel piyasa için → public API verileri (orderbook, open interest, funding, liquidation) çok daha anlamlıdır.
