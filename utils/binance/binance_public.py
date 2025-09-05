@@ -1,4 +1,6 @@
-"""Binance Public API endpoints."""
+"""
+utils/binance/binance_public.py
+Binance Public API endpoints."""
 
 import pandas as pd
 from typing import Any, Dict, List, Optional, Union
@@ -94,4 +96,5 @@ class BinancePublicAPI:
             )
             return [s["symbol"] for s in data["symbols"]]
         except Exception as e:
+
             raise BinanceAPIError(f"Error getting all symbols: {e}")
