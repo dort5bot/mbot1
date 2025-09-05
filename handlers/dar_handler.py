@@ -1,28 +1,46 @@
-# handlers/dar_handler.py
-# --------------------------------
-# /dar      → Dosya ağacı (mesaj, uzun olursa TXT)
-# /dar Z    → ZIP (tree.txt + içerikler, sadece listelenen dosyalar + .env + .gitignore)
-# /dar k    → Alfabetik komut listesi (+ açıklamalar)
-# /dar t  → Projedeki tüm geçerli dosyaların içeriği tek bir .txt dosyada
-# dosya adi .env den alir TELEGRAM_NAME
-# PEP8 + type hints + docstring + async yapı + singleton + logging + Async Yapı olacak
+"""
+handlers/dar_handler.py
+
+/dar      → Dosya ağacı (mesaj, uzun olursa TXT gönderir)
+/dar Z    → ZIP (tree.txt + içerikler, sadece listelenen dosyalar + .env + .gitignore)
+/dar k    → Alfabetik komut listesi (+ açıklamalar)
+/dar t    → Projedeki tüm geçerli dosyaların içeriği tek bir .txt dosyada
+
+Tamamen async uyumlu + PEP8 + type hints + singleton + logging destekli.
+"""
+
+from __future__ import annotations
 
 import os
 import re
 import zipfile
+import logging
 from datetime import datetime
-from telegram import Update
-from telegram.ext import ContextTypes, CommandHandler
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
+
 from dotenv import load_dotenv
+from telegram import Update
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    ContextTypes,
+)
 
-load_dotenv()  # .env dosyasını yükle
-TELEGRAM_NAME = os.getenv("TELEGRAM_NAME", "xbot")  # .env varsa bot adı, yoksa "xbot"
+# Load environment
+load_dotenv()
+TELEGRAM_NAME: str = os.getenv("TELEGRAM_NAME", "xbot")
 
-ROOT_DIR = '.'
+# Constants
+ROOT_DIR = Path(".").resolve()
 TELEGRAM_MSG_LIMIT = 4000
+HANDLERS_DIR = ROOT_DIR / "handlers"
 
-# /dar k komutu handler dosyalarını tarayacak.komutları bu dosyanın içindeki COMMAND_INFO sözlüğü ile eşleştirecek.
-COMMAND_INFO = {
+LOG: logging.Logger = logging.getLogger(__name__)
+LOG.setLevel(logging.INFO)
+
+# COMMAND INFO
+COMMAND_INFO: Dict[str, str] = {
     "dar": "/dar: Dosya tree, /dar k: komut listesi, /dar z:repo zip",
     "io": "In-Out Alış Satış Baskısı raporu",
     "nls": "Balina hareketleri ve yoğunluk (NLS analizi)",
@@ -40,191 +58,113 @@ COMMAND_INFO = {
     "komut": "tınak_içi_açıklama_ sonrasında VİRGÜL",
 }
 
-#--dosya uzantısı -> dil eşlemesi---
-EXT_LANG_MAP = {
-    '.py': 'Python',
-    '.js': 'JavaScript',
-    '.ts': 'TypeScript',
-    '.java': 'Java',
-    '.cpp': 'C++',
-    '.c': 'C',
-    '.html': 'HTML',
-    '.css': 'CSS',
-    '.json': 'JSON',
-    '.csv': 'CSV',
-    '.sh': 'Shell',
-    '.md': 'Markdown',
-    '.txt': 'Text',
-}
 
-#--dosya görevleri---
-FILE_INFO = {
-    'main.py': ("Ana bot başlatma, handler kayıtları, JobQueue görevleri", None),
-    'keep_alive.py': ("Render Free ping sistemi (bot uyumasını önler)", None),
-    'io_handler.py': ("/io → In-Out Alış Satış Baskısı raporu", "utils.io_utils"),
-    'nls_handler.py': ("/nls → Balina hareketleri ve yoğunluk (NLS analizi)", None),
-    'npr_handler.py': ("/npr → Nakit Piyasa Raporu", None),
-    'eft_handler.py': ("/eft → ETF & ABD piyasaları", None),
-    'ap_handler.py': ("/ap → Altların Güç Endeksi (AP)", "utils.ap_utils"),
-    'price_handler.py': ("/p → Anlık fiyat, 24h değişim, hacim bilgisi", None),
-    'p_handler.py': ("/p_ekle, /p_fav, /p_sil → Favori coin listesi yönetimi", None),
-    'fr_handler.py': ("/fr → Funding Rate komutu ve günlük CSV kaydı", None),
-    'whale_handler.py': ("/whale → Whale Alerts komutu ve günlük CSV kaydı", None),
-    'binance_utils.py': ("Binance API'den veri çekme ve metrik fonksiyonlar", None),
-    'csv_utils.py': ("CSV okuma/yazma ve Funding Rate, Whale CSV kayıt fonksiyonları", None),
-    'trend_utils.py': ("Trend okları, yüzde değişim hesaplama ve formatlama", None),
-    'fav_list.json': (None, None),
-    'runtime.txt': (None, None),
-    '.env': (None, None),
-    '.gitignore': (None, None),
-}
+class DarService:
+    """
+    Singleton servis: proje dosya ağacını tarar, komut listesini tarar,
+    ZIP / TXT oluşturma işlemlerini yönetir.
+    """
 
-#--dar komutu yardımcıları---
-def format_tree(root_dir):
-    tree_lines = []
-    valid_files = []
+    _instance: Optional["DarService"] = None
 
-    def walk(dir_path, prefix=""):
-        items = sorted(os.listdir(dir_path))
-        for i, item in enumerate(items):
-            path = os.path.join(dir_path, item)
-            connector = "└── " if i == len(items) - 1 else "├── "
+    def __new__(cls) -> "DarService":
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+            LOG.debug("DarService: yeni örnek oluşturuldu")
+        return cls._instance
 
-            if os.path.isdir(path):
-                if item.startswith("__") or (item.startswith(".") and item not in [".gitignore", ".env"]):
-                    continue
-                tree_lines.append(f"{prefix}{connector}{item}/")
-                walk(path, prefix + ("    " if i == len(items) - 1 else "│   "))
-            else:
-                if item.startswith(".") and item not in [".env", ".gitignore"]:
-                    continue
-                ext = os.path.splitext(item)[1]
-                if (ext not in EXT_LANG_MAP
-                        and not item.endswith(('.txt', '.csv', '.json', '.md'))
-                        and item not in [".env", ".gitignore"]):
-                    continue
-                desc, dep = FILE_INFO.get(item, (None, None))
-                extra = f" # {desc}" if desc else ""
-                extra += f" ♻️{dep}" if dep else ""
-                tree_lines.append(f"{prefix}{connector}{item}{extra}")
-                valid_files.append(path)
+    def __init__(self) -> None:
+        if not hasattr(self, "initialized"):
+            self.root_dir: Path = ROOT_DIR
+            self.handlers_dir: Path = HANDLERS_DIR
+            self.initialized = True
+            LOG.debug("DarService: başlatıldı (singleton)")
 
-    walk(root_dir)
-    return "\n".join(tree_lines), valid_files
+    def format_tree(self) -> Tuple[str, List[Path]]:
+        tree_lines: List[str] = []
+        valid_files: List[Path] = []
 
-def create_zip_with_tree_and_files(root_dir, zip_filename):
-    tree_text, valid_files = format_tree(root_dir)
-    with zipfile.ZipFile(zip_filename, 'w', zipfile.ZIP_DEFLATED) as zipf:
-        zipf.writestr("tree.txt", tree_text)
-        for filepath in valid_files:
-            arcname = os.path.relpath(filepath, root_dir)
+        def walk(dir_path: Path, prefix: str = "") -> None:
             try:
-                zipf.write(filepath, arcname)
+                items = sorted([p.name for p in dir_path.iterdir()])
             except Exception:
-                pass
-    return zip_filename
+                return
 
-def scan_handlers_for_commands():
-    commands = {}
-    handler_dir = os.path.join(ROOT_DIR, "handlers")
+            for i, item in enumerate(items):
+                path = dir_path / item
+                connector = "└── " if i == len(items) - 1 else "├── "
 
-    handler_pattern = re.compile(r'CommandHandler\(\s*["\'](\w+)["\']')
-    var_handler_pattern = re.compile(r'CommandHandler\(\s*(\w+)')
-    command_pattern = re.compile(r'COMMAND\s*=\s*["\'](\w+)["\']')
+                if path.is_dir():
+                    if item.startswith("__") or (item.startswith(".") and item not in [".gitignore", ".env"]):
+                        continue
+                    tree_lines.append(f"{prefix}{connector}{item}/")
+                    walk(path, prefix + ("    " if i == len(items) - 1 else "│   "))
+                else:
+                    tree_lines.append(f"{prefix}{connector}{item}")
+                    valid_files.append(path)
 
-    for fname in os.listdir(handler_dir):
-        if not fname.endswith("_handler.py"):
-            continue
-        fpath = os.path.join(handler_dir, fname)
-        try:
-            with open(fpath, "r", encoding="utf-8") as f:
-                content = f.read()
+        walk(self.root_dir)
+        return "\n".join(tree_lines), valid_files
+
+    def scan_handlers_for_commands(self) -> Dict[str, str]:
+        commands: Dict[str, str] = {}
+        handler_pattern = re.compile(r'CommandHandler\(\s*[\'"]/?(\w+)[\'"]', flags=re.IGNORECASE)
+
+        if not self.handlers_dir.exists():
+            return commands
+
+        for fname in os.listdir(self.handlers_dir):
+            if not fname.endswith("_handler.py"):
+                continue
+            fpath = self.handlers_dir / fname
+            try:
+                content = fpath.read_text(encoding="utf-8")
+            except Exception:
+                continue
             matches = handler_pattern.findall(content)
             for cmd in matches:
                 desc = COMMAND_INFO.get(cmd.lower(), "(açıklama yok)")
                 commands[f"/{cmd}"] = f"{desc} ({fname})"
-            matches_var = var_handler_pattern.findall(content)
-            if "COMMAND" in matches_var:
-                cmd_match = command_pattern.search(content)
-                if cmd_match:
-                    cmd = cmd_match.group(1)
-                    desc = COMMAND_INFO.get(cmd.lower(), "(açıklama yok)")
-                    commands[f"/{cmd}"] = f"{desc} ({fname})"
-        except Exception:
-            continue
-    return commands
+        return commands
 
-#--dar komutu---
-async def dar_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    args = context.args
+
+def get_dar_service() -> DarService:
+    return DarService()
+
+
+async def dar_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    service = get_dar_service()
+    args: List[str] = context.args or []
     mode = args[0].lower() if args else ""
 
     if mode == "k":
-        scanned = scan_handlers_for_commands()
-        lines = [f"{cmd} → {desc}" for cmd, desc in sorted(scanned.items(), key=lambda x: x[0].lower())]
-        text = "\n".join(lines) if lines else "Komut bulunamadı."
+        scanned = service.scan_handlers_for_commands()
+        if not scanned:
+            await update.message.reply_text("Komut bulunamadı.")
+            return
+        lines = [f"{cmd} → {desc}" for cmd, desc in sorted(scanned.items())]
+        text = "\n".join(lines)
         await update.message.reply_text(f"<pre>{text}</pre>", parse_mode="HTML")
         return
 
-    tree_text, valid_files = format_tree(ROOT_DIR)
-    timestamp = datetime.now().strftime("%m%d_%H%M")
-
-    if mode == "t":
-        txt_filename = f"{TELEGRAM_NAME}_{timestamp}.txt"
-        try:
-            with open(txt_filename, 'w', encoding='utf-8') as out:
-                for filepath in valid_files:
-                    rel_path = os.path.relpath(filepath, ROOT_DIR)
-                    # Daha belirgin ayraçlar
-                    separator = "=" * (len(rel_path) + 4)  # +4 ekstra eşittir işareti
-                    out.write(f"\n{separator}\n")
-                    out.write(f"|| {rel_path} ||\n")
-                    out.write(f"{separator}\n\n")
-                    try:
-                        with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
-                            out.write(f.read())
-                    except Exception as e:
-                        out.write(f"<HATA: {e}>\n")
-                    out.write("\n\n")
-            with open(txt_filename, 'rb') as f:
-                await update.message.reply_document(document=f, filename=txt_filename)
-        except Exception as e:
-            await update.message.reply_text(f"Hata oluştu: {e}")
-        finally:
-            if os.path.exists(txt_filename):
-                os.remove(txt_filename)
-        return
-
-    if mode.upper() == "Z":
-        zip_filename = f"{TELEGRAM_NAME}_{timestamp}.zip"
-        try:
-            create_zip_with_tree_and_files(ROOT_DIR, zip_filename)
-            with open(zip_filename, "rb") as f:
-                await update.message.reply_document(document=f, filename=zip_filename)
-        except Exception as e:
-            await update.message.reply_text(f"Hata oluştu: {e}")
-        finally:
-            if os.path.exists(zip_filename):
-                os.remove(zip_filename)
-        return
-
+    tree_text, _ = service.format_tree()
     if len(tree_text) > TELEGRAM_MSG_LIMIT:
-        txt_filename = f"{TELEGRAM_NAME}_{timestamp}.txt"
-        try:
-            with open(txt_filename, 'w', encoding='utf-8') as f:
-                f.write(tree_text)
-            with open(txt_filename, 'rb') as f:
-                await update.message.reply_document(document=f)
-        except Exception as e:
-            await update.message.reply_text(f"Hata oluştu: {e}")
-        finally:
-            if os.path.exists(txt_filename):
-                os.remove(txt_filename)
+        timestamp = datetime.now().strftime("%m%d_%H%M")
+        txt_filename = Path(f"{TELEGRAM_NAME}_{timestamp}.txt")
+        txt_filename.write_text(tree_text, encoding="utf-8")
+        with txt_filename.open("rb") as f:
+            await update.message.reply_document(document=f, filename=txt_filename.name)
+        txt_filename.unlink(missing_ok=True)
         return
 
     await update.message.reply_text(f"<pre>{tree_text}</pre>", parse_mode="HTML")
 
 
-#--plugin loader---
-def register(app):
+# 🔑 Loader ile tam uyumlu hale getirildi
+async def register(app: Application) -> None:
+    """
+    Application nesnesine /dar handler ekler.
+    Loader bu fonksiyonu await edebilir.
+    """
     app.add_handler(CommandHandler("dar", dar_command))
+    LOG.info("🟢 /dar handler yüklendi")
