@@ -67,7 +67,7 @@ class BinanceClient:
     def _validate_config(self):
         """Config validation"""
         # Eğer private method kullanılacaksa API key kontrol et
-        if self.private_methods_required() and not (self.api_key and self.secret_key):
+        if self._private_methods_required() and not (self.api_key and self.secret_key):
             self.log.warning("Private methods için API key gereklidir")
             
         if self.config.MAX_REQUESTS_PER_SECOND > 10:
@@ -206,7 +206,6 @@ class BinanceClient:
             metrics["advanced_metrics"] = self.advanced_metrics.__dict__
             
         return metrics
-#+p
 
     async def get_all_24h_tickers(self) -> List[Dict[str, Any]]:
         """Tüm 24 saatlik ticker verilerini getir."""
@@ -232,4 +231,3 @@ def get_binance_client(api_key: Optional[str] = None,
     if _client_instance is None:
         _client_instance = BinanceClient(api_key, secret_key)
     return _client_instance
-
