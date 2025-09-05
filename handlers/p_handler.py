@@ -5,7 +5,7 @@ handlers/p_handler.py
 /P d → düşenler.
 /P coin1 coin2... → manuel seçili coinler.
 Binance datasında küçük/büyük fark olsa da eşleşir.
-PEP8 + type hints + docstring + async yapı + singleton + logging + Async Yapı olacak
+async uyumlu + PEP8 + type hints + docstring + async yapı + singleton + logging olacak
 """
 
 import logging
