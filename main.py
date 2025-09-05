@@ -12,6 +12,7 @@ import logging
 import nest_asyncio
 import sys
 
+from telegram import Bot    #webhook’u temizle, sadece tek bot örneği çalıştır
 from telegram.ext import Application, ApplicationBuilder
 from telegram.error import Conflict
 from config import get_config, BinanceConfig
@@ -65,6 +66,11 @@ async def start_bot() -> None:
         if not bot_token:
             raise ValueError("❌ TELEGRAM_BOT_TOKEN eksik!")
 
+        # Mevcut webhook’u temizle
+        bot_token = os.getenv("TELEGRAM_BOT_TOKEN", "")
+        bot = Bot(token=bot_token)
+        await bot.delete_webhook(drop_pending_updates=True)
+        
         # Application oluşturma
         app: Application = ApplicationBuilder().token(bot_token).build()
 
