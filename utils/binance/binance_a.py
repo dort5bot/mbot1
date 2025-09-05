@@ -1,156 +1,100 @@
-"""utils/binance/binance_a.py"""
-"""Binance API ana aggregator - tek giriş noktası.
-modülün çalışması için gerekli bileşenler 
+"""utils/binance/binance_a.py
+Binance API ana aggregator - tek giriş noktası.
 
-BinanceHTTPClient (.binance_request):
-CircuitBreaker (.binance_circuit_breaker):
-BinanceAPIError (.binance_exceptions):
-BinanceHTTPClient API-key header eklemeyi destekliyorsa bu sorun olmayacak
+Bu modül Binance API'sine erişim için merkezi bir istemci sınıfı sunar.
+Alt modülleri birleştirir ve hem public hem private endpointlere
+tek sınıf üzerinden erişim imkanı sağlar.
 
-alt modüllerle sisim uyunlu olmalıdır
+Gerekli bileşenler:
+- BinanceHTTPClient (.binance_request)
+- CircuitBreaker (.binance_circuit_breaker)
+- BinancePublicAPI (.binance_public)
+- BinancePrivateAPI (.binance_private)
+- BinanceWebSocketManager (.binance_websocket)
+- Yardımcı fonksiyonlar/metrikler vb.
+
+Not: Private endpoint wrapper'ları burada eklenmiştir (spot/futures/margin/staking/listenKey).
 """
 
 import os
-import asyncio
 import logging
+from typing import Any, Dict, List, Optional, Union
+
 import pandas as pd
-from typing import Any, Dict, List, Optional, Callable, Union
 
 from .binance_request import BinanceHTTPClient
 from .binance_public import BinancePublicAPI
 from .binance_private import BinancePrivateAPI
 from .binance_websocket import BinanceWebSocketManager
-from .binance_circuit_breaker import CircuitBreaker  # ⬅️ Sadece CircuitBreaker
+from .binance_circuit_breaker import CircuitBreaker
 from .binance_utils import klines_to_dataframe
 from .binance_exceptions import BinanceAPIError
 from .binance_metrics import AdvancedMetrics
 from config import get_config
 
+LOG = logging.getLogger("binance_a")
+LOG.setLevel(logging.INFO)
+
 
 class BinanceClient:
-    """Binance API'sine erişim için ana istemci sınıfı"""
-    
-    _instance = None
-    
-    def __new__(cls, *args, **kwargs):
+    """Binance API'sine erişim için ana istemci sınıfı (Singleton)
+
+    Hem public hem private endpoint'lere kolay erişim sağlayan wrapper'lar içerir.
+    """
+
+    _instance: Optional["BinanceClient"] = None
+
+    def __new__(cls, *args, **kwargs) -> "BinanceClient":
         if cls._instance is None:
             cls._instance = super().__new__(cls)
         return cls._instance
-    
-    def __init__(self, api_key: Optional[str] = None, secret_key: Optional[str] = None, 
-                 config: Any = None, http_client: Optional[BinanceHTTPClient] = None,
-                 circuit_breaker: Optional[CircuitBreaker] = None):
-        
-        if hasattr(self, '_initialized') and self._initialized:
+
+    def __init__(
+        self,
+        api_key: Optional[str] = None,
+        secret_key: Optional[str] = None,
+        config: Any = None,
+        http_client: Optional[BinanceHTTPClient] = None,
+        circuit_breaker: Optional[CircuitBreaker] = None,
+    ) -> None:
+        if getattr(self, "_initialized", False):
             return
-            
-        self.api_key = api_key or os.getenv("BINANCE_API_KEY")  # ⬅️ Environment'dan al
-        self.secret_key = secret_key or os.getenv("BINANCE_API_SECRET")  # ⬅️ Environment'dan al
+
+        self.api_key = api_key or os.getenv("BINANCE_API_KEY")
+        self.secret_key = secret_key or os.getenv("BINANCE_API_SECRET")
         self.config = config or get_config()
-        
-        # ✅ TEK HTTP CLIENT ATAMASI
+
+        # HTTP Client (API key/secret burada set edilebilir)
         self.http = http_client or BinanceHTTPClient(self.api_key, self.secret_key, self.config)
-        
-        # ✅ TEK CIRCUIT BREAKER ATAMASI
+
+        # Circuit Breaker
         self.circuit_breaker = circuit_breaker or CircuitBreaker(
             failure_threshold=self.config.CIRCUIT_BREAKER_FAILURE_THRESHOLD,
             reset_timeout=self.config.CIRCUIT_BREAKER_RESET_TIMEOUT,
-            name="binance_main"
+            name="binance_main",
         )
-        
+
         # API Modülleri
         self.public = BinancePublicAPI(self.http, self.circuit_breaker)
         self.private = BinancePrivateAPI(self.http, self.circuit_breaker)
-        
-        # WebSocket Manager
-        self.ws_manager = BinanceWebSocketManager(self.config)
-        
-        # Advanced Metrics
-        self.advanced_metrics = AdvancedMetrics()
-        
-        self.log = logging.getLogger(__name__)
-        self._validate_config()
-        self.log.info("BinanceClient initialized successfully")
+
+        # WebSocket Manager (futures/ws için kullanılabilir)
+        self.ws_manager = BinanceWebSocketManager(secret_key=self.secret_key)
+
+        # Ek metrikler
+        self.metrics = AdvancedMetrics()
+
         self._initialized = True
+        LOG.info("✅ BinanceClient initialized successfully.")
 
-    def _validate_config(self):
-        """Config validation"""
-        # Eğer private method kullanılacaksa API key kontrol et
-        if self._private_methods_required() and not (self.api_key and self.secret_key):
-            self.log.warning("Private methods için API key gereklidir")
-            
-        if self.config.MAX_REQUESTS_PER_SECOND > 10:
-            self.log.warning("⚠️ Yüksek request limiti - Rate limit riski")
-            
-        if len(self.config.SCAN_SYMBOLS) > 50:
-            self.log.warning("⚠️ Çok fazla symbol - Performance riski")
-            
-        return True
-
-    def _private_methods_required(self):
-        """Private methods gerekli mi kontrol et"""
-        # Basit bir kontrol: Eğer private API modülü initialize edilmişse
-        return hasattr(self, 'private') and self.private is not None
-
-    async def health_check(self) -> Dict[str, Any]:
-        """Sistem sağlık durumunu kontrol et."""
-        http_connected = self.http.client is not None if hasattr(self.http, 'client') else False
-        
-        return {
-            "http_connected": http_connected,
-            "ws_connections": len(self.ws_manager.connections) if hasattr(self.ws_manager, 'connections') else 0,
-            "circuit_breaker": self.circuit_breaker.get_status() if hasattr(self.circuit_breaker, 'get_status') else {},
-            "config_valid": self._validate_config(),
-            "metrics": {
-                "total_requests": getattr(self.advanced_metrics, 'total_requests', 0),
-                "weight_remaining": getattr(self.advanced_metrics, 'weight_limit_remaining', 1200)
-            }
-        }
-
-    async def get_multiple_prices(self, symbols: List[str]) -> Dict[str, Any]:
-        """Birden fazla symbol fiyatını al."""
-        results = {}
-        tasks = []
-        
-        valid_symbols = [s for s in symbols if self.validate_symbol(s)]
-        
-        for symbol in valid_symbols:
-            tasks.append(self.get_symbol_price(symbol))
-        
-        # Concurrent execution with error handling
-        try:
-            prices = await asyncio.gather(*tasks, return_exceptions=True)
-            
-            for symbol, price in zip(valid_symbols, prices):
-                if not isinstance(price, Exception):
-                    results[symbol] = price
-                else:
-                    self.log.error(f"Price alma hatası {symbol}: {price}")
-                    
-        except Exception as e:
-            self.log.error(f"Batch price alma hatası: {e}")
-        
-        return results
-
-    def validate_symbol(self, symbol: str) -> bool:
-        """Symbol'ün config'de olup olmadığını kontrol et."""
-        if not hasattr(self.config, 'SCAN_SYMBOLS'):
-            return False
-        return symbol.upper() in [s.upper() for s in self.config.SCAN_SYMBOLS]
-    
-    async def __aenter__(self):
-        """Async context manager entry."""
-        if hasattr(self.http, '__aenter__'):
-            await self.http.__aenter__()
-        return self
-
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
-        """Async context manager exit."""
-        await self.close()
-
-    # Public API methods
+    # --------------------------
+    # PUBLIC WRAPPERS
+    # --------------------------
     async def get_server_time(self) -> Dict[str, Any]:
         return await self.public.get_server_time()
+
+    async def ping(self) -> Dict[str, Any]:
+        return await self.public.ping()
 
     async def get_exchange_info(self) -> Dict[str, Any]:
         return await self.public.get_exchange_info()
@@ -161,83 +105,174 @@ class BinanceClient:
     async def get_order_book(self, symbol: str, limit: int = 100) -> Dict[str, Any]:
         return await self.public.get_order_book(symbol, limit)
 
-    async def get_klines(self, symbol: str, interval: str = "1m", limit: int = 500) -> List[List[Any]]:
+    async def get_recent_trades(self, symbol: str, limit: int = 500) -> List[Dict[str, Any]]:
+        return await self.public.get_recent_trades(symbol, limit)
+
+    async def get_klines(
+        self, symbol: str, interval: str = "1m", limit: int = 500
+    ) -> List[List[Union[str, float, int]]]:
         return await self.public.get_klines(symbol, interval, limit)
 
-    async def get_klines_dataframe(self, symbol: str, interval: str = "1m", limit: int = 500) -> pd.DataFrame:
-        klines = await self.get_klines(symbol, interval, limit)
-        return klines_to_dataframe(klines)
+    async def get_all_24h_tickers(self, symbol: Optional[str] = None) -> Dict[str, Any]:
+        return await self.public.get_all_24h_tickers(symbol)
 
-    # Private API methods
+    async def get_all_symbols(self) -> List[str]:
+        return await self.public.get_all_symbols()
+
+    async def get_book_ticker(
+        self, symbol: Optional[str] = None
+    ) -> Union[Dict[str, Any], List[Dict[str, Any]]]:
+        return await self.public.get_book_ticker(symbol)
+
+    async def get_all_book_tickers(self) -> List[Dict[str, Any]]:
+        return await self.public.get_all_book_tickers()
+
+    async def get_avg_price(self, symbol: str) -> Dict[str, Any]:
+        return await self.public.get_avg_price(symbol)
+
+    async def get_agg_trades(
+        self,
+        symbol: str,
+        from_id: Optional[int] = None,
+        start_time: Optional[int] = None,
+        end_time: Optional[int] = None,
+        limit: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        return await self.public.get_agg_trades(symbol, from_id, start_time, end_time, limit)
+
+    async def get_historical_trades(
+        self, symbol: str, limit: int = 500, from_id: Optional[int] = None
+    ) -> List[Dict[str, Any]]:
+        return await self.public.get_historical_trades(symbol, limit, from_id)
+
+    async def get_ui_klines(
+        self,
+        symbol: str,
+        interval: str = "1m",
+        start_time: Optional[int] = None,
+        end_time: Optional[int] = None,
+        limit: Optional[int] = None,
+    ) -> Any:
+        return await self.public.get_ui_klines(symbol, interval, start_time, end_time, limit)
+
+    async def symbol_exists(self, symbol: str) -> bool:
+        return await self.public.symbol_exists(symbol)
+
+    # --------------------------
+    # PRIVATE WRAPPERS (Spot / Futures / Margin / Staking / ListenKey)
+    # --------------------------
+    # Spot Account & Orders
     async def get_account_info(self) -> Dict[str, Any]:
+        """Spot hesap bilgilerini getir."""
         return await self.private.get_account_info()
 
     async def get_account_balance(self, asset: Optional[str] = None) -> Dict[str, Any]:
+        """Hesap bakiyesi veya tek varlık bakiyesi getir."""
         return await self.private.get_account_balance(asset)
 
-    async def place_order(self, symbol: str, side: str, type_: str,
-                         quantity: float, price: Optional[float] = None) -> Dict[str, Any]:
+    async def place_order(
+        self, symbol: str, side: str, type_: str, quantity: float, price: Optional[float] = None
+    ) -> Dict[str, Any]:
+        """Spot piyasada yeni order oluştur."""
         return await self.private.place_order(symbol, side, type_, quantity, price)
 
-    # WebSocket methods
-    async def ws_ticker(self, symbol: str, callback: Callable[[Dict[str, Any]], Any]) -> None:
-        stream_name = f"{symbol.lower()}@ticker"
-        await self.ws_manager.subscribe(stream_name, callback)
+    async def cancel_order(
+        self, symbol: str, order_id: Optional[int] = None, orig_client_order_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Spot order iptal et."""
+        return await self.private.cancel_order(symbol, order_id, orig_client_order_id)
 
-    async def ws_kline(self, symbol: str, interval: str, callback: Callable[[Dict[str, Any]], Any]) -> None:
-        stream_name = f"{symbol.lower()}@kline_{interval}"
-        await self.ws_manager.subscribe(stream_name, callback)
+    async def get_open_orders(self, symbol: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Açık spot order'ları getir."""
+        return await self.private.get_open_orders(symbol)
 
-    async def close(self) -> None:
-        """Tüm bağlantıları temiz bir şekilde kapat."""
-        try:
-            if hasattr(self, 'ws_manager'):
-                await self.ws_manager.close_all()
-            if hasattr(self, 'http'):
-                await self.http.close()
-            self.log.info("BinanceClient closed successfully")
-        except Exception as e:
-            self.log.error(f"Error closing BinanceClient: {e}")
+    async def get_order_history(self, symbol: str, limit: int = 50) -> List[Dict[str, Any]]:
+        """Spot order geçmişini getir."""
+        return await self.private.get_order_history(symbol, limit)
 
-    def get_metrics(self) -> Dict[str, Any]:
-        """İstemci metriklerini getir."""
-        metrics = {
-            "circuit_breaker": self.circuit_breaker.get_status() if hasattr(self.circuit_breaker, 'get_status') else {}
-        }
-        
-        if hasattr(self, 'http') and hasattr(self.http, 'metrics'):
-            metrics["http"] = self.http.metrics.__dict__
-            
-        if hasattr(self, 'ws_manager') and hasattr(self.ws_manager, 'get_metrics'):
-            metrics["websocket"] = self.ws_manager.get_metrics().__dict__
-            
-        if hasattr(self, 'advanced_metrics'):
-            metrics["advanced_metrics"] = self.advanced_metrics.__dict__
-            
-        return metrics
+    # Futures Account
+    async def get_futures_account_info(self) -> Dict[str, Any]:
+        """Futures hesap bilgilerini getir (USDT-margined/perpetual)."""
+        return await self.private.get_futures_account_info()
 
-    async def get_all_24h_tickers(self) -> List[Dict[str, Any]]:
-        """Tüm 24 saatlik ticker verilerini getir."""
-        try:
-            return await self.public.circuit_breaker.execute(
-                self.http._request, "GET", "/api/v3/ticker/24hr"
-            )
-        except Exception as e:
-            self.log.error(f"Error getting all 24h tickers: {e}")
-            return []
+    async def get_futures_positions(self) -> List[Dict[str, Any]]:
+        """Futures açık pozisyonlarını getir."""
+        return await self.private.get_futures_positions()
 
+    async def place_futures_order(
+        self,
+        symbol: str,
+        side: str,
+        type_: str,
+        quantity: float,
+        price: Optional[float] = None,
+        reduce_only: bool = False,
+    ) -> Dict[str, Any]:
+        """Futures piyasada yeni order oluştur."""
+        return await self.private.place_futures_order(symbol, side, type_, quantity, price, reduce_only)
 
-# --- Singleton Factory ---
-_client_instance: Optional[BinanceClient] = None
+    async def get_funding_rate(self, symbol: str, limit: int = 1) -> List[Dict[str, Any]]:
+        """Funding rate (kısa dönem geçmişi) bilgilerini getir."""
+        return await self.private.get_funding_rate(symbol, limit)
 
-def get_binance_client(api_key: Optional[str] = None,
-                       secret_key: Optional[str] = None) -> BinanceClient:
-    """
-    BinanceClient için singleton factory.
-    İlk çağrıda instance oluşturulur, sonrakilerde aynı instance döner.
-    """
-    global _client_instance
-    if _client_instance is None:
-        _client_instance = BinanceClient(api_key, secret_key)
-    return _client_instance
+    # Margin Trading
+    async def get_margin_account_info(self) -> Dict[str, Any]:
+        """Margin hesap bilgilerini getir."""
+        return await self.private.get_margin_account_info()
 
+    async def place_margin_order(
+        self, symbol: str, side: str, type_: str, quantity: float, price: Optional[float] = None
+    ) -> Dict[str, Any]:
+        """Margin piyasada yeni order oluştur."""
+        return await self.private.place_margin_order(symbol, side, type_, quantity, price)
+
+    async def repay_margin_loan(self, asset: str, amount: float) -> Dict[str, Any]:
+        """Margin borcunu öde."""
+        return await self.private.repay_margin_loan(asset, amount)
+
+    # Staking (Savings / Earn benzeri private endpoints)
+    async def get_staking_products(self, product: str = "STAKING") -> List[Dict[str, Any]]:
+        """Staking/earn ürün listesini getir."""
+        return await self.private.get_staking_products(product)
+
+    async def stake_product(self, product: str, product_id: str, amount: float) -> Dict[str, Any]:
+        """Belirtilen staking ürününe stake yap."""
+        return await self.private.stake_product(product, product_id, amount)
+
+    async def get_staking_history(self, product: str = "STAKING") -> List[Dict[str, Any]]:
+        """Staking geçmiş kayıtlarını getir."""
+        return await self.private.get_staking_history(product)
+
+    # User Data Stream (ListenKey)
+    async def create_listen_key(self) -> str:
+        """Spot için listenKey oluşturur (websocket user data stream)."""
+        return await self.private.create_listen_key()
+
+    async def keepalive_listen_key(self, listen_key: str) -> Dict[str, Any]:
+        """ListenKey'i keepalive (uzatma)."""
+        return await self.private.keepalive_listen_key(listen_key)
+
+    async def delete_listen_key(self, listen_key: str) -> Dict[str, Any]:
+        """ListenKey siler."""
+        return await self.private.delete_listen_key(listen_key)
+
+    # --------------------------
+    # Helpers
+    # --------------------------
+    async def klines_to_df(self, symbol: str, interval: str = "1h", limit: int = 500) -> pd.DataFrame:
+        """Kline verilerini DataFrame'e dönüştürür."""
+        klines = await self.get_klines(symbol, interval, limit)
+        return klines_to_dataframe(klines)
+
+    # --------------------------
+    # Convenience / helper wrappers - future additions
+    # --------------------------
+    # #future: buraya pozisyon özetleri, PnL hesapları, aggregated metrics vb. eklenebilir.
+    # Örnek:
+    # async def get_account_overview(self) -> Dict[str, Any]:
+    #     """Spot + Futures + Margin üzerinden bir hesap özeti döndürür (farketmelere dikkat)."""
+    #     spot = await self.get_account_info()
+    #     futures = await self.get_futures_account_info()
+    #     margin = await self.get_margin_account_info()
+    #     # ...aggregate ve normalize et
+    #     return {"spot": spot, "futures": futures, "margin": margin}
