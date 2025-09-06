@@ -1,11 +1,15 @@
 """
 handlers/p_handler.py
+binance_a.py uyunlu
 /p →CONFIG.SCAN_SYMBOLS default(filtre ekler btc ile btcusdt sonuç verir)
 /P n → sayı girilirse hacimli ilk n coin
 /P d → düşenler.
 /P coin1 coin2... → manuel seçili coinler.
 Binance datasında küçük/büyük fark olsa da eşleşir.
 async uyumlu + PEP8 + type hints + docstring + async yapı + singleton + logging olacak
+
+sorun olursa komut yapısı 
+/p,pn,pd,p coin
 """
 
 import logging
