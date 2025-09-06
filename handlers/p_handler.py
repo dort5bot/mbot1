@@ -13,7 +13,9 @@ import os
 from typing import List, Optional, Dict, Any, Set
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
-from utils.binance.binance_a import get_binance_client
+
+# Binance client import - güncellenmiş yapıya göre
+from utils.binance.binance_a import BinanceClient
 
 LOG = logging.getLogger(__name__)
 LOG.addHandler(logging.NullHandler())
@@ -35,9 +37,39 @@ SCAN_SYMBOLS: List[str] = [
     ).split(",")
 ]
 
+# Singleton Binance client instance
+_binance_client: Optional[BinanceClient] = None
+
+
+async def get_binance_client() -> BinanceClient:
+    """
+    Binance client singleton instance'ını döndürür.
+    
+    Returns:
+        BinanceClient: Binance API client instance
+    """
+    global _binance_client
+    if _binance_client is None:
+        # Environment variables'dan API key'leri al
+        api_key = os.getenv("BINANCE_API_KEY")
+        secret_key = os.getenv("BINANCE_API_SECRET")
+        
+        _binance_client = BinanceClient(api_key=api_key, secret_key=secret_key)
+        LOG.info("Binance client initialized")
+    
+    return _binance_client
+
 
 def normalize_symbol(sym: str) -> str:
-    """Sembol adını normalize eder (ör. bnb → BNBUSDT)."""
+    """
+    Sembol adını normalize eder (ör. bnb → BNBUSDT).
+    
+    Args:
+        sym: Sembol adı
+        
+    Returns:
+        Normalize edilmiş sembol adı
+    """
     sym = sym.strip().upper()
     if not sym.endswith("USDT"):
         sym += "USDT"
@@ -54,25 +86,29 @@ async def fetch_ticker_data(
     Binance'ten ticker verilerini alır, filtreler ve sıralar.
 
     Args:
-        symbols (Optional[List[str]]): İstenen semboller (örn: ["BTC", "ETHUSDT"]).
-        descending (bool): Sıralama yönü. Default True.
-        sort_by (str): "change" veya "volume".
-        limit (Optional[int]): Kaç adet sonuç döneceği.
+        symbols: İstenen semboller (örn: ["BTC", "ETHUSDT"])
+        descending: Sıralama yönü. Default True
+        sort_by: "change" veya "volume"
+        limit: Kaç adet sonuç döneceği
 
     Returns:
-        List[Dict[str, Any]]: Ticker verileri.
+        Ticker verileri listesi
     """
     try:
-        api = get_binance_client(None, None)
-        data: List[Dict[str, Any]] = await api.get_all_24h_tickers()
-
-        if not data:
+        # Binance client'ı al
+        client = await get_binance_client()
+        
+        # Tüm ticker verilerini al
+        all_tickers = await client.public.get_all_24h_tickers()
+        
+        if not all_tickers:
             LOG.warning("Binance'ten veri alınamadı")
             return []
 
         # Sadece USDT pariteleri
         usdt_pairs: List[Dict[str, Any]] = [
-            d for d in data if d.get("symbol", "").upper().endswith("USDT")
+            d for d in all_tickers if isinstance(d, dict) and 
+            d.get("symbol", "").upper().endswith("USDT")
         ]
 
         # İstenen coinler varsa filtrele
@@ -84,10 +120,13 @@ async def fetch_ticker_data(
 
         # Sıralama
         if sort_by == "volume":
-            usdt_pairs.sort(key=lambda x: float(x["quoteVolume"]), reverse=True)
+            usdt_pairs.sort(
+                key=lambda x: float(x.get("quoteVolume", 0)), 
+                reverse=descending
+            )
         else:
             usdt_pairs.sort(
-                key=lambda x: float(x["priceChangePercent"]),
+                key=lambda x: float(x.get("priceChangePercent", 0)),
                 reverse=descending
             )
 
@@ -99,7 +138,16 @@ async def fetch_ticker_data(
 
 
 def format_report(data: List[Dict[str, Any]], title: str) -> str:
-    """Ticker verilerini okunabilir bir rapor formatına dönüştürür."""
+    """
+    Ticker verilerini okunabilir bir rapor formatına dönüştürür.
+    
+    Args:
+        data: Ticker verileri
+        title: Rapor başlığı
+        
+    Returns:
+        Formatlanmış rapor metni
+    """
     if not data:
         return "Gösterilecek veri yok."
 
@@ -107,10 +155,10 @@ def format_report(data: List[Dict[str, Any]], title: str) -> str:
 
     for i, coin in enumerate(data, start=1):
         try:
-            symbol: str = coin["symbol"].replace("USDT", "")
-            change: float = float(coin["priceChangePercent"])
-            vol_usd: float = float(coin["quoteVolume"])
-            price: float = float(coin["lastPrice"])
+            symbol: str = coin.get("symbol", "").replace("USDT", "")
+            change: float = float(coin.get("priceChangePercent", 0))
+            vol_usd: float = float(coin.get("quoteVolume", 0))
+            price: float = float(coin.get("lastPrice", 0))
 
             # Hacim formatı
             if vol_usd >= 1_000_000_000:
@@ -124,15 +172,21 @@ def format_report(data: List[Dict[str, Any]], title: str) -> str:
                 f"{i}. {symbol}: {change:+.2f}% | {vol_fmt} | {price:.8f}"
             )
 
-        except (KeyError, ValueError) as e:
-            LOG.warning(f"Veri formatlama hatası: {e}")
+        except (KeyError, ValueError, TypeError) as e:
+            LOG.warning(f"Veri formatlama hatası: {e}, coin: {coin.get('symbol', 'unknown')}")
             continue
 
     return "\n".join(lines)
 
 
 async def p_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """/P komutunu işler ve kripto para verilerini gösterir."""
+    """
+    /P komutunu işler ve kripto para verilerini gösterir.
+    
+    Args:
+        update: Telegram update object
+        context: Telegram context object
+    """
     try:
         if not update.message:
             return
@@ -175,17 +229,20 @@ async def p_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text(report)
 
     except Exception as e:
-        LOG.error(f"/P komutu işlenirken hata: {e}")
+        LOG.error(f"/P komutu işlenirken hata: {e}", exc_info=True)
         await update.message.reply_text("Bir hata oluştu. Lütfen daha sonra tekrar deneyin.")
 
 
 def register(application: Application) -> None:
-    """Telegram botu için komut işleyicilerini kaydeder."""
+    """
+    Telegram botu için komut işleyicilerini kaydeder.
+    
+    Args:
+        application: Telegram Application instance
+    """
     try:
         application.add_handler(CommandHandler("p", p_handler))
         application.add_handler(CommandHandler("P", p_handler))
         LOG.info("P handler başarıyla kaydedildi.")
     except Exception as e:
         LOG.error(f"P handler kaydedilirken hata: {e}")
-
-
