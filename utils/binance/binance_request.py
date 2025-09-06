@@ -1,223 +1,322 @@
-"""Binance HTTP request mekanizması."""
+"""
+HTTP client for Binance API requests.
+"""
 
-import os
-import time
-import json
+import aiohttp
 import asyncio
-import random
-import hmac
-import hashlib
-import httpx
+import time
 import logging
-from typing import Any, Dict, List, Optional, Tuple, Callable
-from urllib.parse import urlencode
-from aiolimiter import AsyncLimiter
+import hashlib
+import hmac
+import urllib.parse
+from typing import Dict, List, Any, Optional, Union
+from .binance_constants import BASE_URL, FUTURES_URL, DEFAULT_CONFIG
+from .binance_exceptions import (
+    BinanceAPIError, BinanceRequestError, BinanceRateLimitError,
+    BinanceAuthenticationError, BinanceTimeoutError
+)
+from .binance_metrics import metrics
 
-from .binance_constants import RequestPriority
-from .binance_metrics import RequestMetrics
-from .binance_exceptions import BinanceRequestError, BinanceRateLimitError
+logger = logging.getLogger(__name__)
+
 
 class BinanceHTTPClient:
-    """Binance HTTP API istemcisi için gelişmiş yönetim sınıfı."""
+    """
+    Async HTTP client for Binance API with retry logic and error handling.
+    """
     
-    def __init__(self, api_key: Optional[str] = None, secret_key: Optional[str] = None, config: Any = None) -> None:
+    def __init__(
+        self,
+        api_key: Optional[str] = None,
+        secret_key: Optional[str] = None,
+        config: Optional[Dict[str, Any]] = None,
+        session: Optional[aiohttp.ClientSession] = None
+    ):
+        """
+        Initialize HTTP client.
+        
+        Args:
+            api_key: Binance API key
+            secret_key: Binance secret key
+            config: Configuration dictionary
+            session: Existing aiohttp session (optional)
+        """
         self.api_key = api_key
         self.secret_key = secret_key
-        self.config = config
-        self._last_request = 0
-        self.client = None
-        self.limiter = AsyncLimiter(config.LIMITER_RATE, config.LIMITER_PERIOD)
-        self.log = logging.getLogger(__name__)
-
-        # Concurrency control
-        self.semaphores = {
-            RequestPriority.HIGH: asyncio.Semaphore(config.CONCURRENCY),
-            RequestPriority.NORMAL: asyncio.Semaphore(config.CONCURRENCY),
-            RequestPriority.LOW: asyncio.Semaphore(config.CONCURRENCY // 2),
-        }
-
-        # Cache system
-        self._cache: Dict[str, Tuple[float, Any]] = {}
-        self._last_cache_cleanup = time.time()
-
-        # Rate limiting
-        self.last_request_time = 0
-        self.min_request_interval = 1.0 / config.MAX_REQUESTS_PER_SECOND
-
-        # Metrics
-        self.metrics = RequestMetrics()
-        self.request_times: List[float] = []
-
-    async def __aenter__(self):
-        """Async context manager entry."""
-        self.client = httpx.AsyncClient(
-            base_url=self.config.BASE_URL,
-            timeout=self.config.REQUEST_TIMEOUT,
-            limits=httpx.Limits(
-                max_connections=self.config.MAX_CONNECTIONS,
-                max_keepalive_connections=self.config.MAX_KEEPALIVE_CONNECTIONS,
-                keepalive_expiry=300
-            ),
-            http2=True,
-            verify=True,
-            cert=os.getenv("SSL_CERT_PATH")
-        )
-        return self
-
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
-        """Async context manager exit."""
-        await self.close()
-
-    def _cleanup_cache(self) -> None:
-        """Süresi dolmuş önbellek girdilerini temizle."""
+        self.config = {**DEFAULT_CONFIG, **(config or {})}
+        self._session = session
+        self._last_request_time = 0
+        self._min_request_interval = 1.0 / 10  # 10 requests per second default
+        self._weight_used = 0
+        self._weight_reset_time = time.time() + 60  # Reset in 1 minute
+        
+        logger.info("✅ BinanceHTTPClient initialized")
+    
+    async def _get_session(self) -> aiohttp.ClientSession:
+        """Get or create aiohttp session."""
+        if self._session is None or self._session.closed:
+            self._session = aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(total=self.config["timeout"]),
+                connector=aiohttp.TCPConnector(limit=100, limit_per_host=20)
+            )
+        return self._session
+    
+    async def close(self) -> None:
+        """Close HTTP session."""
+        if self._session and not self._session.closed:
+            await self._session.close()
+            logger.info("✅ BinanceHTTPClient session closed")
+    
+    def _generate_signature(self, params: Dict[str, Any]) -> str:
+        """
+        Generate HMAC SHA256 signature for private requests.
+        
+        Args:
+            params: Request parameters
+            
+        Returns:
+            Signature string
+        """
+        if not self.secret_key:
+            raise BinanceAuthenticationError("Secret key required for signed requests")
+        
+        query_string = urllib.parse.urlencode(params)
+        return hmac.new(
+            self.secret_key.encode('utf-8'),
+            query_string.encode('utf-8'),
+            hashlib.sha256
+        ).hexdigest()
+    
+    def _add_auth_headers(self, headers: Dict[str, str]) -> Dict[str, str]:
+        """
+        Add authentication headers to request.
+        
+        Args:
+            headers: Existing headers
+            
+        Returns:
+            Updated headers with authentication
+        """
+        if self.api_key:
+            headers['X-MBX-APIKEY'] = self.api_key
+        return headers
+    
+    async def _rate_limit(self) -> None:
+        """
+        Implement rate limiting between requests.
+        """
         current_time = time.time()
-        if current_time - self._last_cache_cleanup < self.config.CACHE_CLEANUP_INTERVAL:
-            return
-
-        expired_keys = [key for key, (ts, _) in self._cache.items()
-                        if current_time - ts > self.config.BINANCE_TICKER_TTL]
-
-        for key in expired_keys:
-            del self._cache[key]
-
-        # Cache boyutu sınırlaması
-        if len(self._cache) > 1000:
-            oldest_keys = sorted(self._cache.keys(), key=lambda k: self._cache[k][0])[:100]
-            for key in oldest_keys:
-                del self._cache[key]
-
-        self._last_cache_cleanup = current_time
-
+        time_since_last = current_time - self._last_request_time
+        
+        if time_since_last < self._min_request_interval:
+            await asyncio.sleep(self._min_request_interval - time_since_last)
+        
+        self._last_request_time = time.time()
+    
+    async def _handle_rate_limit(self, response_headers: Dict[str, str]) -> None:
+        """
+        Handle rate limit information from response headers.
+        
+        Args:
+            response_headers: Response headers from Binance
+        """
+        weight = response_headers.get('X-MBX-USED-WEIGHT', '0')
+        order_count = response_headers.get('X-MBX-ORDER-COUNT-10S', '0')
+        
+        try:
+            weight_used = int(weight)
+            await metrics.record_rate_limit(weight_used)
+            self._weight_used += weight_used
+        except ValueError:
+            pass
+        
+        # Reset weight counter every minute
+        if time.time() > self._weight_reset_time:
+            self._weight_used = 0
+            self._weight_reset_time = time.time() + 60
+            await metrics.reset_rate_limit()
+    
     async def _request(
         self,
         method: str,
-        path: str,
+        endpoint: str,
         params: Optional[Dict[str, Any]] = None,
         signed: bool = False,
         futures: bool = False,
-        max_retries: Optional[int] = None,
-        priority: RequestPriority = RequestPriority.NORMAL,
+        retries: int = None
     ) -> Any:
-        """Ana HTTP request methodu."""
-        if self.client is None:
-            raise BinanceRequestError("HTTP client not initialized")
-
-        try:
-            if max_retries is None:
-                max_retries = self.config.DEFAULT_RETRY_ATTEMPTS
-
-            # Rate limiting
-            current_time = time.time()
-            time_since_last = current_time - self.last_request_time
-            if time_since_last < self.min_request_interval:
-                await asyncio.sleep(self.min_request_interval - time_since_last)
-
-            self.last_request_time = time.time()
-            self.metrics.total_requests += 1
-
-            # Base URL ve headers
-            base_url = self.config.FAPI_URL if futures else self.config.BASE_URL
-            headers = {}
-            params = params or {}
-
-            # Signed request
-            if signed:
-                if not self.api_key or not self.secret_key:
-                    raise BinanceAuthenticationError("API key and secret key required for signed requests")
-                signed_params = dict(params)
-                signed_params["timestamp"] = int(time.time() * 1000)
-                query = urlencode(signed_params)
-                signature = hmac.new(self.secret_key.encode(), query.encode(), hashlib.sha256).hexdigest()
-                signed_params["signature"] = signature
-                params = signed_params
-                headers["X-MBX-APIKEY"] = self.api_key
-            elif self.api_key:
-                headers["X-MBX-APIKEY"] = self.api_key
-
-            # Cache cleanup
-            if time.time() - self._last_cache_cleanup > self.config.CACHE_CLEANUP_INTERVAL:
-                self._cleanup_cache()
-
-            # Cache kontrolü
-            cache_key = f"{method}:{base_url}{path}:{json.dumps(params, sort_keys=True) if params else ''}"
-            ttl = getattr(self.config, "BINANCE_TICKER_TTL", 0)
-
-            if ttl > 0 and cache_key in self._cache:
-                ts_cache, data = self._cache[cache_key]
-                if time.time() - ts_cache < ttl:
-                    self.metrics.cache_hits += 1
-                    return data
-                else:
-                    self.metrics.cache_misses += 1
-                    del self._cache[cache_key]
-
-            # Retry loop
-            attempt = 0
-            last_exception = None
-            start_time = time.time()
-
-            while attempt < max_retries:
-                attempt += 1
-                try:
-                    async with self.limiter:
-                        async with self.semaphores[priority]:
-                            r = await self.client.request(method, path, params=params, headers=headers)
-
-                    if r.status_code == 200:
-                        data = r.json()
-                        if ttl > 0:
-                            self._cache[cache_key] = (time.time(), data)
-
-                        response_time = time.time() - start_time
-                        self.request_times.append(response_time)
-                        if len(self.request_times) > 100:
-                            self.request_times.pop(0)
-
-                        self.metrics.avg_response_time = sum(self.request_times) / len(self.request_times)
-                        self.metrics.last_request_time = time.time()
-                        return data
-
-                    if r.status_code == 429:
-                        self.metrics.rate_limited_requests += 1
-                        retry_after = int(r.headers.get("Retry-After", 1))
-                        delay = min(2 ** attempt, 60) + retry_after
-                        self.log.warning(f"Rate limited for {path}. Sleeping {delay}s")
-                        await asyncio.sleep(delay)
-                        continue
-
-                    r.raise_for_status()
-
-                except httpx.HTTPStatusError as e:
-                    if e.response is not None and e.response.status_code >= 500:
-                        delay = min(2 ** attempt, 30)
-                        self.log.warning(f"Server error {e.response.status_code} for {path}, retrying")
-                        await asyncio.sleep(delay)
-                        last_exception = e
-                        continue
-                    else:
-                        self.metrics.failed_requests += 1
-                        self.log.error(f"HTTP error for {path}: {e}")
-                        raise BinanceRequestError(f"HTTP error: {e}")
-
-                except (httpx.RequestError, asyncio.TimeoutError) as e:
-                    last_exception = e
-                    self.metrics.failed_requests += 1
-                    delay = min(2 ** attempt, 60) + random.uniform(0, 0.3)
-                    self.log.error(f"Request error for {path}: {e}, retrying")
-                    await asyncio.sleep(delay)
-
-            raise last_exception or BinanceRequestError(f"Max retries ({max_retries}) exceeded for {path}")
-
-        except Exception as e:
-            self.log.error(f"Request failed for {method} {path}: {str(e)}")
-            raise
-
-    async def close(self) -> None:
-        """HTTP client'ı temiz bir şekilde kapat."""
-        if self.client:
+        """
+        Make HTTP request to Binance API.
+        
+        Args:
+            method: HTTP method (GET, POST, DELETE, etc.)
+            endpoint: API endpoint
+            params: Request parameters
+            signed: Whether request requires signature
+            futures: Whether to use futures API
+            retries: Number of retries (overrides config)
+            
+        Returns:
+            API response data
+            
+        Raises:
+            BinanceAPIError: For API errors
+            BinanceRequestError: For request errors
+        """
+        retries = retries or self.config["max_retries"]
+        params = params or {}
+        
+        # Prepare request
+        base_url = FUTURES_URL if futures else BASE_URL
+        url = f"{base_url}{endpoint}"
+        headers = {'Content-Type': 'application/json'}
+        
+        if signed:
+            params['timestamp'] = int(time.time() * 1000)
+            if 'recvWindow' not in params:
+                params['recvWindow'] = self.config["recv_window"]
+            params['signature'] = self._generate_signature(params)
+        
+        headers = self._add_auth_headers(headers)
+        
+        # Make request with retries
+        for attempt in range(retries + 1):
             try:
-                await self.client.aclose()
-                self.client = None
-                self.log.info("HTTP client closed successfully")
+                await self._rate_limit()
+                
+                session = await self._get_session()
+                start_time = time.time()
+                
+                async with session.request(
+                    method=method,
+                    url=url,
+                    params=params if method == 'GET' else None,
+                    data=params if method != 'GET' else None,
+                    headers=headers
+                ) as response:
+                    response_time = time.time() - start_time
+                    
+                    # Handle rate limits
+                    await self._handle_rate_limit(response.headers)
+                    
+                    # Parse response
+                    if response.status == 200:
+                        data = await response.json()
+                        await metrics.record_request(True, response_time)
+                        return data
+                    
+                    # Handle errors
+                    error_data = await response.text()
+                    await self._handle_error(response.status, error_data, response_time)
+                    
+            except asyncio.TimeoutError:
+                error_msg = f"Request timeout after {self.config['timeout']}s"
+                await metrics.record_request(False, self.config['timeout'], "timeout")
+                if attempt == retries:
+                    raise BinanceTimeoutError(error_msg)
+                
+            except aiohttp.ClientError as e:
+                error_msg = f"HTTP client error: {str(e)}"
+                await metrics.record_request(False, 0, "connection_error")
+                if attempt == retries:
+                    raise BinanceRequestError(error_msg)
+            
             except Exception as e:
-                self.log.error(f"Error closing HTTP client: {e}")
+                error_msg = f"Unexpected error: {str(e)}"
+                await metrics.record_request(False, 0, "unexpected_error")
+                if attempt == retries:
+                    raise BinanceRequestError(error_msg)
+            
+            # Exponential backoff for retries
+            if attempt < retries:
+                delay = self.config["retry_delay"] * (2 ** attempt)
+                logger.warning(f"Retry {attempt + 1}/{retries} after {delay}s delay")
+                await asyncio.sleep(delay)
+    
+    async def _handle_error(self, status_code: int, error_data: str, response_time: float) -> None:
+        """
+        Handle API error responses.
+        
+        Args:
+            status_code: HTTP status code
+            error_data: Error response data
+            response_time: Response time in seconds
+        """
+        try:
+            error_json = await asyncio.get_event_loop().run_in_executor(
+                None, lambda: eval(error_data) if error_data else {}
+            )
+            error_code = error_json.get('code', -1)
+            error_msg = error_json.get('msg', 'Unknown error')
+            
+            await metrics.record_request(False, response_time, f"api_error_{error_code}")
+            
+            if status_code == 429:
+                raise BinanceRateLimitError(error_msg, error_code, error_json)
+            elif status_code == 401:
+                raise BinanceAuthenticationError(error_msg, error_code, error_json)
+            elif status_code >= 400:
+                raise BinanceAPIError(error_msg, error_code, error_json)
+            else:
+                raise BinanceRequestError(f"HTTP {status_code}: {error_msg}")
+                
+        except (ValueError, SyntaxError):
+            await metrics.record_request(False, response_time, "invalid_response")
+            raise BinanceRequestError(f"HTTP {status_code}: Invalid response: {error_data}")
+    
+    # Public methods for different request types
+    async def get(
+        self,
+        endpoint: str,
+        params: Optional[Dict[str, Any]] = None,
+        signed: bool = False,
+        futures: bool = False
+    ) -> Any:
+        """Make GET request."""
+        return await self._request('GET', endpoint, params, signed, futures)
+    
+    async def post(
+        self,
+        endpoint: str,
+        params: Optional[Dict[str, Any]] = None,
+        signed: bool = False,
+        futures: bool = False
+    ) -> Any:
+        """Make POST request."""
+        return await self._request('POST', endpoint, params, signed, futures)
+    
+    async def put(
+        self,
+        endpoint: str,
+        params: Optional[Dict[str, Any]] = None,
+        signed: bool = False,
+        futures: bool = False
+    ) -> Any:
+        """Make PUT request."""
+        return await self._request('PUT', endpoint, params, signed, futures)
+    
+    async def delete(
+        self,
+        endpoint: str,
+        params: Optional[Dict[str, Any]] = None,
+        signed: bool = False,
+        futures: bool = False
+    ) -> Any:
+        """Make DELETE request."""
+        return await self._request('DELETE', endpoint, params, signed, futures)
+    
+    def get_weight_usage(self) -> int:
+        """Get current weight usage."""
+        return self._weight_used
+    
+    def get_weight_remaining(self) -> int:
+        """Get remaining weight until reset."""
+        return 1200 - self._weight_used  # Binance default weight limit
+    
+    async def health_check(self) -> bool:
+        """Check if API is reachable."""
+        try:
+            await self.get('/api/v3/ping')
+            return True
+        except Exception:
+            return False

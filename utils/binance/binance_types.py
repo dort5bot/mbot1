@@ -1,57 +1,73 @@
 """
-utils/binance/binance_types.py
-Binance API type definitions."""
+Binance API type definitions and type hints.
+"""
 
-"""utils/binance/binance_types.py - Type definitions for Binance API."""
+from typing import TypedDict, List, Union, Optional, Dict, Any
+from datetime import datetime
 
-from typing import TypedDict, Literal, Union, List, Dict, Any
+# Basic Types
+Symbol = str
+Asset = str
+Interval = str  # e.g., "1m", "1h", "1d"
+OrderSide = str  # "BUY" or "SELL"
+OrderType = str  # "LIMIT", "MARKET", etc.
 
-# 📊 Response Types
-class TickerData(TypedDict):
-    symbol: str
-    price: str
-    timestamp: int
 
-class KlineData(TypedDict):
+class Kline(TypedDict):
+    """Kline/candlestick data structure."""
     open_time: int
-    open: str
-    high: str
-    low: str
-    close: str
-    volume: str
+    open: float
+    high: float
+    low: float
+    close: float
+    volume: float
     close_time: int
+    quote_asset_volume: float
+    number_of_trades: int
+    taker_buy_base_asset_volume: float
+    taker_buy_quote_asset_volume: float
+    ignore: float
 
-class OrderBookData(TypedDict):
+
+class OrderBook(TypedDict):
+    """Order book data structure."""
+    lastUpdateId: int
     bids: List[List[str]]
     asks: List[List[str]]
-    lastUpdateId: int
 
-# 🎯 Order Types
-OrderSide = Literal["BUY", "SELL"]
-OrderType = Literal["LIMIT", "MARKET", "STOP_LOSS", "STOP_LOSS_LIMIT", "TAKE_PROFIT", "TAKE_PROFIT_LIMIT"]
-OrderStatus = Literal["NEW", "PARTIALLY_FILLED", "FILLED", "CANCELED", "REJECTED", "EXPIRED"]
 
-class OrderData(TypedDict):
+class Ticker(TypedDict):
+    """24hr ticker price change statistics."""
     symbol: str
-    orderId: int
-    side: OrderSide
-    type: OrderType
-    status: OrderStatus
-    price: str
-    quantity: str
-    executedQty: str
-    cummulativeQuoteQty: str
-    timeInForce: str
-    time: int
-    updateTime: int
+    priceChange: str
+    priceChangePercent: str
+    weightedAvgPrice: str
+    prevClosePrice: str
+    lastPrice: str
+    lastQty: str
+    bidPrice: str
+    askPrice: str
+    openPrice: str
+    highPrice: str
+    lowPrice: str
+    volume: str
+    quoteVolume: str
+    openTime: int
+    closeTime: int
+    firstId: int
+    lastId: int
+    count: int
 
-# 📈 Account Types
-class BalanceData(TypedDict):
+
+class Balance(TypedDict):
+    """Account balance structure."""
     asset: str
     free: str
     locked: str
 
-class AccountData(TypedDict):
+
+class AccountInfo(TypedDict):
+    """Account information structure."""
     makerCommission: int
     takerCommission: int
     buyerCommission: int
@@ -61,4 +77,96 @@ class AccountData(TypedDict):
     canDeposit: bool
     updateTime: int
     accountType: str
-    balances: List[BalanceData]
+    balances: List[Balance]
+    permissions: List[str]
+
+
+class Order(TypedDict):
+    """Order information structure."""
+    symbol: str
+    orderId: int
+    orderListId: int
+    clientOrderId: str
+    price: str
+    origQty: str
+    executedQty: str
+    cummulativeQuoteQty: str
+    status: str
+    timeInForce: str
+    type: str
+    side: str
+    stopPrice: str
+    icebergQty: str
+    time: int
+    updateTime: int
+    isWorking: bool
+    origQuoteOrderQty: str
+
+
+class Trade(TypedDict):
+    """Trade information structure."""
+    id: int
+    price: str
+    qty: str
+    quoteQty: str
+    time: int
+    isBuyerMaker: bool
+    isBestMatch: bool
+
+
+# Futures Types
+class Position(TypedDict):
+    """Futures position information."""
+    symbol: str
+    positionAmt: str
+    entryPrice: str
+    markPrice: str
+    unRealizedProfit: str
+    liquidationPrice: str
+    leverage: str
+    maxNotionalValue: str
+    marginType: str
+    isolatedMargin: str
+    isAutoAddMargin: str
+    positionSide: str
+    notional: str
+    isolatedWallet: str
+    updateTime: int
+
+
+class FuturesAccount(TypedDict):
+    """Futures account information."""
+    assets: List[Dict[str, Any]]
+    positions: List[Position]
+    canDeposit: bool
+    canTrade: bool
+    canWithdraw: bool
+    feeTier: int
+    updateTime: int
+    totalInitialMargin: str
+    totalMaintMargin: str
+    totalWalletBalance: str
+    totalUnrealizedProfit: str
+    totalMarginBalance: str
+    totalPositionInitialMargin: str
+    totalOpenOrderInitialMargin: str
+    totalCrossWalletBalance: str
+    totalCrossUnPnl: str
+    availableBalance: str
+    maxWithdrawAmount: str
+
+
+# WebSocket Types
+class WSMessage(TypedDict):
+    """WebSocket message structure."""
+    stream: str
+    data: Dict[str, Any]
+
+
+# Response Types
+class BinanceResponse(TypedDict):
+    """Generic Binance API response."""
+    success: bool
+    data: Optional[Dict[str, Any]]
+    error: Optional[str]
+    timestamp: int

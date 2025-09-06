@@ -1,19 +1,17 @@
-"""utils/binance/__init__.py - Public exports."""
+"""
+Binance API utilities package.
+"""
 
 from .binance_a import BinanceClient
-from .binance_types import TickerData, KlineData, OrderData, BalanceData, AccountData
-from .binance_exceptions import (
-    BinanceAPIError, BinanceRequestError, BinanceWebSocketError,
-    BinanceAuthenticationError, BinanceRateLimitError, BinanceCircuitBreakerError
-)
-from .binance_metrics import RequestMetrics, WSMetrics, AdvancedMetrics
-from .binance_circuit_breaker import CircuitBreaker, SmartCircuitBreaker
+from .binance_request import BinanceHTTPClient
+from .binance_circuit_breaker import CircuitBreaker
+from .binance_exceptions import BinanceAPIError, BinanceAuthenticationError
 
+__version__ = "1.0.0"
 __all__ = [
-    'BinanceClient',
-    'TickerData', 'KlineData', 'OrderData', 'BalanceData', 'AccountData',
-    'BinanceAPIError', 'BinanceRequestError', 'BinanceWebSocketError',
-    'BinanceAuthenticationError', 'BinanceRateLimitError', 'BinanceCircuitBreakerError',
-    'RequestMetrics', 'WSMetrics', 'AdvancedMetrics',
-    'CircuitBreaker', 'SmartCircuitBreaker'
+    "BinanceClient",
+    "BinanceHTTPClient",
+    "CircuitBreaker",
+    "BinanceAPIError",
+    "BinanceAuthenticationError",
 ]
