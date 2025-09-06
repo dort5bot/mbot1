@@ -1,5 +1,4 @@
-# utils/binance/binance_public.py
-"""
+"""utils/binance/binance_public.py
 Binance Public API endpoints.
 
 Bu modül, Binance public endpoint'lerini kapsayan asenkron bir client sağlar.
@@ -14,6 +13,7 @@ Beklenen yardımcı bağımlılıklar (proje içinde bulunmalı):
 # Rate limiting - HTTP
 # (Not: Rate limiting uygulaması CircuitBreaker veya http client tarafında yapılmalıdır.)
 """
+
 from __future__ import annotations
 
 import logging
@@ -412,31 +412,110 @@ class BinancePublicAPI:
             raise BinanceAPIError(f"Error getting ui klines for {symbol}: {e}")
 
     # -------------------------
-    # Convenience / helpers
+    # Futures Public Endpoints (eklenen)
     # -------------------------
-    async def symbol_exists(self, symbol: str) -> bool:
+    async def get_futures_exchange_info(self) -> Dict[str, Any]:
         """
-        Check if a symbol exists on the exchange.
+        Get futures exchange information.
+
+        Returns:
+            Futures exchange info payload.
+
+        Raises:
+            BinanceAPIError on failure.
+        """
+        try:
+            LOG.debug("Requesting futures exchange info.")
+            return await self.circuit_breaker.execute(self.http._request, "GET", "/fapi/v1/exchangeInfo", futures=True)
+        except Exception as e:
+            LOG.exception("Error getting futures exchange info.")
+            raise BinanceAPIError(f"Error getting futures exchange info: {e}")
+
+    async def get_futures_order_book(self, symbol: str, limit: int = 100) -> Dict[str, Any]:
+        """
+        Get futures order book (depth) for a symbol.
+
+        Args:
+            symbol: e.g. "ETHUSDT"
+            limit: depth limit (valid: 5, 10, 20, 50, 100, 500, 1000). Default 100.
+
+        Returns:
+            Depth payload with bids/asks.
+
+        Raises:
+            BinanceAPIError on failure.
+        """
+        try:
+            LOG.debug("Requesting futures order book for %s limit=%s", symbol, limit)
+            return await self.circuit_breaker.execute(
+                self.http._request, "GET", "/fapi/v1/depth", {"symbol": symbol.upper(), "limit": limit}, futures=True
+            )
+        except Exception as e:
+            LOG.exception("Error getting futures order book for %s", symbol)
+            raise BinanceAPIError(f"Error getting futures order book for {symbol}: {e}")
+
+    async def get_futures_klines(self, symbol: str, interval: str = "1m", limit: int = 500) -> List[List[Union[str, float, int]]]:
+        """
+        Get futures kline/candlestick data.
+
+        Args:
+            symbol: trading pair symbol
+            interval: e.g. "1m", "3m", "5m", "1h", "1d", ...
+            limit: number of klines to return (default 500)
+
+        Returns:
+            List of kline lists as Binance returns.
+
+        Raises:
+            BinanceAPIError on failure.
+        """
+        try:
+            LOG.debug("Requesting futures klines for %s interval=%s limit=%s", symbol, interval, limit)
+            return await self.circuit_breaker.execute(
+                self.http._request, "GET", "/fapi/v1/klines", {"symbol": symbol.upper(), "interval": interval, "limit": limit}, futures=True
+            )
+        except Exception as e:
+            LOG.exception("Error getting futures klines for %s", symbol)
+            raise BinanceAPIError(f"Error getting futures klines for {symbol}: {e}")
+
+    async def get_futures_mark_price(self, symbol: str) -> Dict[str, Any]:
+        """
+        Get mark price for a futures symbol.
 
         Args:
             symbol: trading pair symbol
 
         Returns:
-            True if exists, False otherwise.
+            Mark price data.
 
         Raises:
-            BinanceAPIError on failure to fetch exchange info.
+            BinanceAPIError on failure.
         """
         try:
-            LOG.debug("Checking if symbol exists: %s", symbol)
-            info = await self.get_exchange_info()
-            for s in info.get("symbols", []):
-                if s.get("symbol") == symbol.upper():
-                    return True
-            return False
+            LOG.debug("Requesting futures mark price for %s", symbol)
+            return await self.circuit_breaker.execute(
+                self.http._request, "GET", "/fapi/v1/premiumIndex", {"symbol": symbol.upper()}, futures=True
+            )
         except Exception as e:
-            LOG.exception("Error checking if symbol exists: %s", symbol)
-            raise BinanceAPIError(f"Error checking if symbol exists {symbol}: {e}")
+            LOG.exception("Error getting futures mark price for %s", symbol)
+            raise BinanceAPIError(f"Error getting futures mark price for {symbol}: {e}")
 
-    # You can add more helper methods here as needed (ex: normalized DataFrame converters).
+    async def get_futures_funding_rate_history(self, symbol: str, limit: int = 100) -> List[Dict[str, Any]]:
+        """
+        Get funding rate history for a futures symbol.
 
+        Args:
+            symbol: trading pair symbol
+            limit: number of records to return (default 100)
+
+        Returns:
+            List of funding rate history records.
+
+        Raises:
+            BinanceAPIError on failure.
+        """
+        try:
+            LOG.debug("Requesting futures funding rate history for %s limit=%s", symbol, limit)
+            return await self.circuit_breaker.execute(
+                self.http._request, "GET", "/fapi/v1/fundingRate", {"symbol": symbol.upper(), "limit": limit}, futures=True
+       
