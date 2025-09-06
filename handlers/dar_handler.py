@@ -2,7 +2,7 @@
 handlers/dar_handler.py
 
 /dar      → Dosya ağacı (mesaj, uzun olursa TXT gönderir)
-/dar Z    → ZIP (tree.txt + içerikler, sadece listelenen dosyalar + .env + .gitignore)
+/dar z    → ZIP (tree.txt + içerikler, sadece listelenen dosyalar + .env + .gitignore)
 /dar k    → Alfabetik komut listesi (+ açıklamalar)
 /dar t    → Projedeki tüm geçerli dosyaların içeriği tek bir .txt dosyada
 
@@ -37,11 +37,10 @@ TELEGRAM_MSG_LIMIT = 4000
 HANDLERS_DIR = ROOT_DIR / "handlers"
 
 LOG: logging.Logger = logging.getLogger(__name__)
-LOG.setLevel(logging.INFO)
 
 # COMMAND INFO
 COMMAND_INFO: Dict[str, str] = {
-    "dar": "/dar: Dosya tree, /dar k: komut listesi, /dar z:repo zip",
+    "dar": "/dar: Dosya tree, /dar k: komut listesi, /dar z:repo zip, /dar t: tüm içerik txt",
     "io": "In-Out Alış Satış Baskısı raporu",
     "nls": "Balina hareketleri ve yoğunluk (NLS analizi)",
     "npr": "Nakit Piyasa Raporu",
@@ -127,6 +126,42 @@ class DarService:
                 commands[f"/{cmd}"] = f"{desc} ({fname})"
         return commands
 
+    def create_zip(self, tree_text: str, valid_files: List[Path]) -> Path:
+        timestamp = datetime.now().strftime("%m%d_%H%M")
+        zip_filename = Path(f"{TELEGRAM_NAME}_{timestamp}.zip")
+
+        with zipfile.ZipFile(zip_filename, "w", zipfile.ZIP_DEFLATED) as zipf:
+            zipf.writestr("tree.txt", tree_text)
+
+            for fpath in valid_files:
+                try:
+                    zipf.write(fpath, fpath.relative_to(self.root_dir))
+                except Exception:
+                    continue
+
+            # özel dosyalar
+            for extra in [".env", ".gitignore"]:
+                extra_path = self.root_dir / extra
+                if extra_path.exists():
+                    zipf.write(extra_path, extra)
+
+        return zip_filename
+
+    def create_all_txt(self, valid_files: List[Path]) -> Path:
+        timestamp = datetime.now().strftime("%m%d_%H%M")
+        txt_filename = Path(f"{TELEGRAM_NAME}_all_{timestamp}.txt")
+
+        with txt_filename.open("w", encoding="utf-8") as f:
+            for fpath in valid_files:
+                try:
+                    content = fpath.read_text(encoding="utf-8")
+                except Exception:
+                    continue
+                f.write(f"\n\n===== {fpath} =====\n\n")
+                f.write(content)
+
+        return txt_filename
+
 
 def get_dar_service() -> DarService:
     return DarService()
@@ -136,6 +171,8 @@ async def dar_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     service = get_dar_service()
     args: List[str] = context.args or []
     mode = args[0].lower() if args else ""
+
+    tree_text, valid_files = service.format_tree()
 
     if mode == "k":
         scanned = service.scan_handlers_for_commands()
@@ -147,7 +184,21 @@ async def dar_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await update.message.reply_text(f"<pre>{text}</pre>", parse_mode="HTML")
         return
 
-    tree_text, _ = service.format_tree()
+    if mode == "z":
+        zip_path = service.create_zip(tree_text, valid_files)
+        with zip_path.open("rb") as f:
+            await update.message.reply_document(document=f, filename=zip_path.name)
+        zip_path.unlink(missing_ok=True)
+        return
+
+    if mode == "t":
+        txt_path = service.create_all_txt(valid_files)
+        with txt_path.open("rb") as f:
+            await update.message.reply_document(document=f, filename=txt_path.name)
+        txt_path.unlink(missing_ok=True)
+        return
+
+    # default: sadece dosya ağacı
     if len(tree_text) > TELEGRAM_MSG_LIMIT:
         timestamp = datetime.now().strftime("%m%d_%H%M")
         txt_filename = Path(f"{TELEGRAM_NAME}_{timestamp}.txt")
@@ -155,16 +206,14 @@ async def dar_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         with txt_filename.open("rb") as f:
             await update.message.reply_document(document=f, filename=txt_filename.name)
         txt_filename.unlink(missing_ok=True)
-        return
+    else:
+        await update.message.reply_text(f"<pre>{tree_text}</pre>", parse_mode="HTML")
 
-    await update.message.reply_text(f"<pre>{tree_text}</pre>", parse_mode="HTML")
 
-
-# 🔑 Loader ile tam uyumlu hale getirildi
-async def register(app: Application) -> None:
+async def register(application: Application) -> None:
     """
     Application nesnesine /dar handler ekler.
     Loader bu fonksiyonu await edebilir.
     """
-    app.add_handler(CommandHandler("dar", dar_command))
+    application.add_handler(CommandHandler("dar", dar_command))
     LOG.info("🟢 /dar handler yüklendi")
