@@ -4,7 +4,20 @@ main.py - Telegram Bot Ana Giriş Noktası
 🔐 Güvenli yapı: .env ile secret yönetimi
 ⚙️ Katmanlı mimari: Config, handler loader, async yapı
 📦 Modüler yapı: Handler'lar otomatik yüklenir
+webhook moduna uygun
+.env içine ekle
+        WEBHOOK_URL=https://mbot1-fcu9.onrender.com/webhook
+        ENABLE_PING_SERVER=true
 async uyumlu + PEP8 + type hints + docstring + singleton + logging destekler
+"""
+"""
+main.py - Telegram Bot Ana Giriş Noktası (Webhook Modu)
+
+🔐 Güvenli yapı: .env ile secret yönetimi
+⚙️ Katmanlı mimari: Config, handler loader, async yapı
+📦 Modüler yapı: Handler'lar otomatik yüklenir
+async uyumlu + PEP8 + type hints + singleton + logging destekler
+🌍 Webhook mode: Render gibi servislerde uzun vadeli stabil çalışır
 """
 
 import os
@@ -15,7 +28,7 @@ import signal
 import nest_asyncio
 from typing import Optional
 
-from telegram import Bot
+from telegram import Bot, Update
 from telegram.ext import Application, ApplicationBuilder
 from telegram.error import Conflict
 from aiohttp import web
@@ -59,46 +72,74 @@ async def start_ping_server() -> web.TCPSite:
 
 async def start_bot() -> Application:
     """
-    Telegram botu başlatır.
+    Telegram botu başlatır (Webhook mode).
 
     Returns:
-        Application: Başlatılan Telegram uygulama objesi
+        Application: Başlatılan Telegram Application objesi
     """
     app: Optional[Application] = None
     try:
+        # 📌 Binance Config yükle
         config: BinanceConfig = await get_config()
-
         if not config.api_key or not config.secret_key:
             raise ValueError("❌ API Key veya Secret eksik!")
 
         logger.info("🔐 API Key ve Secret yüklendi")
 
-        # Telegram bot token
+        # 📌 Telegram bot token
         bot_token: str = os.getenv("TELEGRAM_BOT_TOKEN", "")
         if not bot_token:
             raise ValueError("❌ TELEGRAM_BOT_TOKEN eksik!")
 
-        # Mevcut webhook'u temizle
-        bot = Bot(token=bot_token)
-        await bot.delete_webhook(drop_pending_updates=True)
+        # 📌 Webhook URL
+        webhook_url: str = os.getenv("WEBHOOK_URL", "").strip()
+        if not webhook_url:
+            raise ValueError("❌ WEBHOOK_URL eksik!")
 
-        # Application oluşturma
+        # 📌 Telegram Bot nesnesi
+        bot = Bot(token=bot_token)
+
+        # 📌 Mevcut webhook'u temizle ve güncelle
+        await bot.delete_webhook(drop_pending_updates=True)
+        await bot.set_webhook(url=webhook_url)
+        logger.info("🌐 Webhook set edildi: %s", webhook_url)
+
+        # 📌 Application oluşturma
         app = ApplicationBuilder().token(bot_token).build()
 
-        # Handler'ları yükle
+        # 📌 Handler'ları yükle
         await load_handlers(app)
         await clear_handler_cache()
         loaded = await get_loaded_handlers()
         logger.info("Loaded handlers: %s", loaded)
+        logger.info("✅ Tüm handler'lar başarıyla yüklendi.")
 
-        logger.info("✅ Tüm handler'lar başarıyla yüklendi. Bot başlatılıyor...")
+        # 📌 aiohttp WebApp (Webhook endpoint)
+        async def webhook_handler(request: web.Request) -> web.Response:
+            try:
+                data = await request.json()
+                update: Update = Update.de_json(data, app.bot)
+                await app.update_queue.put(update)
+            except Exception as exc:
+                logger.exception("🚨 Webhook verisi işlenemedi: %s", exc)
+                return web.Response(status=500, text="Webhook error")
+            return web.Response(text="OK")
 
-        # Ping server gerekiyorsa başlat
-        ping_site: Optional[web.TCPSite] = None
+        web_app = web.Application()
+        web_app.router.add_post("/webhook", webhook_handler)
+
+        # 📌 Ayrıca opsiyonel ping server
         if os.getenv("ENABLE_PING_SERVER", "false").lower() == "true":
-            ping_site = await start_ping_server()
+            web_app.router.add_get("/", lambda _: web.Response(text="✅ Bot alive"))
 
-        # Graceful shutdown için sinyal handler'ları
+        port = int(os.getenv("PORT", 8080))
+        runner = web.AppRunner(web_app)
+        await runner.setup()
+        site = web.TCPSite(runner, "0.0.0.0", port)
+        await site.start()
+        logger.info("🚀 Webhook server started on port %s", port)
+
+        # 📌 Graceful shutdown için sinyal handler
         loop = asyncio.get_event_loop()
         stop_event = asyncio.Event()
 
@@ -109,19 +150,16 @@ async def start_bot() -> Application:
         for sig in (signal.SIGTERM, signal.SIGINT):
             loop.add_signal_handler(sig, signal_handler)
 
-        # Çakışma kontrolü ile polling
+        # 📌 Application lifecycle
         await app.initialize()
         await app.start()
-
         try:
             await stop_event.wait()
         finally:
             logger.info("🔴 Bot durduruluyor...")
             await app.stop()
             await app.shutdown()
-
-            if ping_site:
-                await ping_site._runner.cleanup()
+            await runner.cleanup()
 
         return app
 
