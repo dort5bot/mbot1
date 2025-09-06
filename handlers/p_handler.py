@@ -1,7 +1,7 @@
 """
 handlers/p_handler.py
 /p →CONFIG.SCAN_SYMBOLS default(filtre ekler btc ile btcusdt sonuç verir)
-/P n → sayı girilirse limit = n oluyor.
+/P n → sayı girilirse hacimli ilk n coin
 /P d → düşenler.
 /P coin1 coin2... → manuel seçili coinler.
 Binance datasında küçük/büyük fark olsa da eşleşir.
