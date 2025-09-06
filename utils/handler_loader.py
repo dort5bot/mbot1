@@ -1,10 +1,16 @@
 """
-Handler Loader
---------------
+utils/handler_loader.py
+-----------------------
 Telegram bot handler dosyalarını otomatik yüklemek için yardımcı modül.
-Silinen dosyaları otomatik olarak cache'ten temizler.
-Tamamen async uyumlu + PEP8 + type hints + singleton + logging destekler.
-await clear_handler_cache() veya await get_loaded_handlers() şeklinde çağrılır.
+
+🔧 Özellikler:
+- Handler plugin loader
+- Silinen dosyaları otomatik olarak cache'ten temizler
+- Alt klasör (recursive) desteği
+- Async uyumlu
+- Singleton pattern
+- Logging destekli
+- PEP8 + type hints uyumlu
 """
 
 import os
@@ -12,92 +18,102 @@ import sys
 import importlib
 import logging
 from types import ModuleType
-from typing import Any, Callable, Optional, Set, Coroutine, Union
+from typing import Dict, List, Optional
 
-LOG: logging.Logger = logging.getLogger("handler_loader")
-
-# Singleton cache: Aynı handler iki kez yüklenmesin
-_LOADED_HANDLERS: Set[str] = set()
+logger = logging.getLogger(__name__)
 
 
-async def load_handlers(application: Any, path: str = "handlers") -> None:
+class HandlerLoader:
     """
-    Belirtilen klasördeki tüm handler modüllerini tarar ve yükler.
-    Silinen dosyaları cache'ten otomatik olarak temizler.
-    Eğer modül içinde `register(application)` fonksiyonu varsa çağırır.
+    Telegram bot handler dosyalarını dinamik olarak yüklemek için singleton sınıf.
 
-    Args:
-        application (Any): Telegram Application instance.
-        path (str, optional): Handler modüllerinin bulunduğu klasör. Varsayılan: "handlers".
+    Alt klasör desteği ile:
+        handlers/abc.py  -> handlers.abc
+        handlers/analiz/xyz.py -> handlers.analiz.xyz
     """
-    global _LOADED_HANDLERS
 
-    if not os.path.isdir(path):
-        LOG.error("❌ Handler path not found: %s", path)
-        return
+    _instance: Optional["HandlerLoader"] = None
 
-    # Mevcut handler dosyalarını bul
-    current_files: Set[str] = {
-        f"{file[:-3]}"
-        for file in os.listdir(path)
-        if file.endswith(".py") and file != "__init__.py"
-    }
+    def __new__(cls, handlers_dir: str = "handlers") -> "HandlerLoader":
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+            cls._instance._initialize(handlers_dir)
+            logger.info("✅ HandlerLoader singleton instance created")
+        return cls._instance
 
-    # Cache'i güncelle (silinen dosyaları kaldır)
-    _LOADED_HANDLERS = _LOADED_HANDLERS.intersection(current_files)
+    def _initialize(self, handlers_dir: str) -> None:
+        self.handlers_dir = handlers_dir
+        self._cache: Dict[str, ModuleType] = {}
 
-    # Handler path'ini sys.path'e ekle
-    abs_path: str = os.path.abspath(path)
-    if abs_path not in sys.path:
-        sys.path.insert(0, abs_path)
+    def _discover_handler_files(self) -> List[str]:
+        """
+        Handler dizinindeki tüm .py dosyalarını recursive şekilde bulur.
 
-    for module_name in current_files:
-        if module_name in _LOADED_HANDLERS:
-            LOG.debug("⚠️ Handler already loaded, skipping: %s", module_name)
-            continue
+        Returns:
+            List of file paths relative to handlers_dir
+        """
+        handler_files: List[str] = []
+        for root, _, files in os.walk(self.handlers_dir):
+            for file in files:
+                if file.endswith(".py") and not file.startswith("_"):
+                    full_path = os.path.join(root, file)
+                    rel_path = os.path.relpath(full_path, self.handlers_dir)
+                    module_name = rel_path[:-3].replace(os.sep, ".")
+                    handler_files.append(module_name)
+        return handler_files
 
-        try:
-            # Modülü import et
-            module: ModuleType = importlib.import_module(module_name)
+    async def load_handlers(self) -> List[ModuleType]:
+        """
+        Handler dosyalarını yükle (recursive destekli).
 
-            register_func: Optional[
-                Union[Callable[[Any], Any], Callable[[Any], Coroutine[Any, Any, Any]]]
-            ] = getattr(module, "register", None)
+        Returns:
+            Yüklenen handler modüllerinin listesi
+        """
+        loaded_modules: List[ModuleType] = []
 
-            if register_func is None:
-                LOG.warning("⚠️ No register() found in handler: %s", module_name)
-                continue
+        if not os.path.isdir(self.handlers_dir):
+            logger.warning(f"⚠️ Handler directory '{self.handlers_dir}' not found.")
+            return loaded_modules
 
-            if callable(register_func):
-                result = register_func(application)
-                if hasattr(result, "__await__"):  # async fonksiyon ise await et
-                    await result
-                LOG.info("🟢 Handler loaded: %s", module_name)
-                _LOADED_HANDLERS.add(module_name)
-            else:
-                LOG.warning(
-                    "⚠️ Invalid register function type in handler: %s", module_name
-                )
+        handler_modules = self._discover_handler_files()
+        for module_name in handler_modules:
+            full_module = f"{self.handlers_dir}.{module_name}"
+            try:
+                if full_module in sys.modules:
+                    module = importlib.reload(sys.modules[full_module])
+                else:
+                    module = importlib.import_module(full_module)
+                self._cache[full_module] = module
+                loaded_modules.append(module)
+                logger.info(f"✅ Loaded handler: {full_module}")
+            except Exception as e:
+                logger.error(f"❌ Failed to load handler {full_module}: {e}")
+        return loaded_modules
 
-        except Exception as exc:
-            LOG.exception("🚨 Failed to load handler %s: %s", module_name, exc)
+    async def clear_cache(self) -> None:
+        """
+        Handler cache'i temizle (silinen dosyaları kaldır).
+        """
+        removed = []
+        for module_name in list(self._cache.keys()):
+            # modulename -> handlers.analiz.xyz
+            relative_path = module_name.replace(".", os.sep) + ".py"
+            full_path = os.path.join(os.getcwd(), relative_path)
+
+            if not os.path.exists(full_path):
+                sys.modules.pop(module_name, None)
+                self._cache.pop(module_name, None)
+                removed.append(module_name)
+
+        if removed:
+            logger.info(f"🧹 Removed handlers from cache: {removed}")
+
+    async def get_loaded_handlers(self) -> Dict[str, ModuleType]:
+        """
+        Yüklenmiş handler modüllerini döndür.
+        """
+        return self._cache
 
 
-async def clear_handler_cache() -> None:
-    """
-    Handler cache'ini temizler.
-    Bu sayede tüm handler'lar yeniden yüklenebilir hale gelir.
-    """
-    global _LOADED_HANDLERS
-    _LOADED_HANDLERS.clear()
-    LOG.info("♻️ Handler cache cleared")
-
-
-async def get_loaded_handlers() -> Set[str]:
-    """
-    Yüklenmiş handler'ların isimlerini döndürür.
-
-    Returns:
-        Set[str]: Yüklenmiş handler modül isimleri.
-    """
-    return _LOADED_HANDLERS.copy()
+# Singleton instance
+handler_loader = HandlerLoader()
