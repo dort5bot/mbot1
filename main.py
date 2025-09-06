@@ -1,26 +1,5 @@
 """
 main.py - Telegram Bot Ana Giriş Noktası
-
-🔐 Güvenli yapı: .env ile secret yönetimi
-⚙️ Katmanlı mimari: Config, handler loader, async yapı
-📦 Modüler yapı: Handler'lar otomatik yüklenir
-webhook moduna uygun
-.env içine ekle
-        WEBHOOK_URL=https://mbot1-fcu9.onrender.com/webhook
-        ENABLE_PING_SERVER=true
-async uyumlu + PEP8 + type hints + docstring + singleton + logging destekler
-"""
-"""
-main.py - Telegram Bot Ana Giriş Noktası (Webhook Modu)
-
-🔐 Güvenli yapı: .env ile secret yönetimi
-⚙️ Katmanlı mimari: Config, handler loader, async yapı
-📦 Modüler yapı: Handler'lar otomatik yüklenir
-async uyumlu + PEP8 + type hints + singleton + logging destekler
-🌍 Webhook mode: Render gibi servislerde uzun vadeli stabil çalışır
-"""
-"""
-main.py - Telegram Bot Ana Giriş Noktası
 ----------------------------------------
 Render uyumlu webhook setup (aiohttp).
 - Async + logging + .env desteği
