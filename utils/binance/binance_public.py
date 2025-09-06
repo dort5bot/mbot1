@@ -518,4 +518,128 @@ class BinancePublicAPI:
             LOG.debug("Requesting futures funding rate history for %s limit=%s", symbol, limit)
             return await self.circuit_breaker.execute(
                 self.http._request, "GET", "/fapi/v1/fundingRate", {"symbol": symbol.upper(), "limit": limit}, futures=True
-       
+            )
+        except Exception as e:
+            LOG.exception("Error getting futures funding rate history for %s", symbol)
+            raise BinanceAPIError(f"Error getting futures funding rate history for {symbol}: {e}")
+
+    async def get_futures_24hr_ticker(self, symbol: Optional[str] = None) -> Union[Dict[str, Any], List[Dict[str, Any]]]:
+        """
+        Get 24 hour ticker price change statistics for futures.
+
+        Args:
+            symbol: optional trading pair symbol. If None, returns all tickers.
+
+        Returns:
+            Dict for single symbol or list of dicts for all symbols.
+
+        Raises:
+            BinanceAPIError on failure.
+        """
+        try:
+            params: Dict[str, Any] = {}
+            if symbol:
+                params["symbol"] = symbol.upper()
+            LOG.debug("Requesting futures 24hr ticker for symbol=%s", symbol)
+            return await self.circuit_breaker.execute(
+                self.http._request, "GET", "/fapi/v1/ticker/24hr", params, futures=True
+            )
+        except Exception as e:
+            LOG.exception("Error getting futures 24hr ticker for %s", symbol)
+            raise BinanceAPIError(f"Error getting futures 24hr ticker for {symbol or 'ALL'}: {e}")
+
+    async def get_futures_open_interest(self, symbol: str) -> Dict[str, Any]:
+        """
+        Get open interest for a futures symbol.
+
+        Args:
+            symbol: trading pair symbol
+
+        Returns:
+            Open interest data.
+
+        Raises:
+            BinanceAPIError on failure.
+        """
+        try:
+            LOG.debug("Requesting futures open interest for %s", symbol)
+            return await self.circuit_breaker.execute(
+                self.http._request, "GET", "/fapi/v1/openInterest", {"symbol": symbol.upper()}, futures=True
+            )
+        except Exception as e:
+            LOG.exception("Error getting futures open interest for %s", symbol)
+            raise BinanceAPIError(f"Error getting futures open interest for {symbol}: {e}")
+
+    # -------------------------
+    # Convenience / helpers
+    # -------------------------
+    async def symbol_exists(self, symbol: str) -> bool:
+        """
+        Check if a symbol exists on the exchange.
+
+        Args:
+            symbol: trading pair symbol
+
+        Returns:
+            True if exists, False otherwise.
+
+        Raises:
+            BinanceAPIError on failure to fetch exchange info.
+        """
+        try:
+            LOG.debug("Checking if symbol exists: %s", symbol)
+            info = await self.get_exchange_info()
+            for s in info.get("symbols", []):
+                if s.get("symbol") == symbol.upper():
+                    return True
+            return False
+        except Exception as e:
+            LOG.exception("Error checking if symbol exists: %s", symbol)
+            raise BinanceAPIError(f"Error checking if symbol exists {symbol}: {e}")
+
+    # -------------------------
+    # Convenience methods for futures
+    # -------------------------
+    async def get_all_futures_symbols(self) -> List[str]:
+        """
+        Get list of all futures symbols from exchangeInfo.
+
+        Returns:
+            List of symbol strings.
+
+        Raises:
+            BinanceAPIError on failure.
+        """
+        try:
+            LOG.debug("Requesting all futures symbols via exchangeInfo.")
+            data = await self.get_futures_exchange_info()
+            symbols = [s["symbol"] for s in data.get("symbols", [])]
+            LOG.debug("Retrieved %d futures symbols.", len(symbols))
+            return symbols
+        except Exception as e:
+            LOG.exception("Error getting all futures symbols.")
+            raise BinanceAPIError(f"Error getting all futures symbols: {e}")
+
+    async def futures_symbol_exists(self, symbol: str) -> bool:
+        """
+        Check if a symbol exists on the futures exchange.
+
+        Args:
+            symbol: trading pair symbol
+
+        Returns:
+            True if exists, False otherwise.
+
+        Raises:
+            BinanceAPIError on failure to fetch exchange info.
+        """
+        try:
+            LOG.debug("Checking if futures symbol exists: %s", symbol)
+            info = await self.get_futures_exchange_info()
+            for s in info.get("symbols", []):
+                if s.get("symbol") == symbol.upper():
+                    return True
+            return False
+        except Exception as e:
+            LOG.exception("Error checking if futures symbol exists: %s", symbol)
+            raise BinanceAPIError(f"Error checking if futures symbol exists {symbol}: {e}")
