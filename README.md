@@ -1,13 +1,14 @@
 GELİŞTİRME SİRASİ
-🟨 Temel başlatma 
+#
+🟨 1-Temel başlatma 
 main.py
 utils/handler_loader.py
 bağımsız/dar
-
-🟥 temel veri kaynağı 
+#
+🟥2- temel veri kaynağı 
 utils/binance
-
-🟢 temel uzerine inşa 
+#
+🟢3- temel uzerine inşa 
 handlerler
 analys
 vs
