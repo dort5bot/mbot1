@@ -12,6 +12,7 @@ Telegram bot handler dosyalarını otomatik yüklemek için yardımcı modül.
 - Detaylı logging + error reporting
 - PEP8 + type hints uyumlu
 - Aiogram 3.x Router pattern desteği
+Tüm handler'lar register_handlers fonksiyonu aracılığıyla application'a eklenir
 """
 
 import os
