@@ -6,10 +6,8 @@ handlers/dar_handler.py
 /dar k    → Alfabetik komut listesi (+ açıklamalar)
 /dar t    → Projedeki tüm geçerli dosyaların içeriği tek bir .txt dosyada
 
-Tamamen async uyumlu + PEP8 + type hints + singleton + logging destekli.
+Aiogram 3.x uyumlu, async/await pattern'ine uygun hale getirilmiştir.
 """
-
-from __future__ import annotations
 
 import os
 import re
@@ -20,12 +18,9 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 from dotenv import load_dotenv
-from telegram import Update
-from telegram.ext import (
-    Application,
-    CommandHandler,
-    ContextTypes,
-)
+from aiogram import Router, types
+from aiogram.filters import Command
+from aiogram.types import FSInputFile
 
 # Load environment
 load_dotenv()
@@ -36,7 +31,8 @@ ROOT_DIR = Path(".").resolve()
 TELEGRAM_MSG_LIMIT = 4000
 HANDLERS_DIR = ROOT_DIR / "handlers"
 
-LOG: logging.Logger = logging.getLogger(__name__)
+logger = logging.getLogger(__name__)
+router = Router(name="dar_handler")
 
 # COMMAND INFO
 COMMAND_INFO: Dict[str, str] = {
@@ -69,7 +65,7 @@ class DarService:
     def __new__(cls) -> "DarService":
         if cls._instance is None:
             cls._instance = super().__new__(cls)
-            LOG.debug("DarService: yeni örnek oluşturuldu")
+            logger.debug("DarService: yeni örnek oluşturuldu")
         return cls._instance
 
     def __init__(self) -> None:
@@ -77,7 +73,7 @@ class DarService:
             self.root_dir: Path = ROOT_DIR
             self.handlers_dir: Path = HANDLERS_DIR
             self.initialized = True
-            LOG.debug("DarService: başlatıldı (singleton)")
+            logger.debug("DarService: başlatıldı (singleton)")
 
     def format_tree(self) -> Tuple[str, List[Path]]:
         tree_lines: List[str] = []
@@ -108,6 +104,7 @@ class DarService:
     def scan_handlers_for_commands(self) -> Dict[str, str]:
         commands: Dict[str, str] = {}
         handler_pattern = re.compile(r'CommandHandler\(\s*[\'"]/?(\w+)[\'"]', flags=re.IGNORECASE)
+        router_pattern = re.compile(r'router\.(message|callback_query)\(\s*Command\(\s*[\'"](\w+)[\'"]', flags=re.IGNORECASE)
 
         if not self.handlers_dir.exists():
             return commands
@@ -120,10 +117,19 @@ class DarService:
                 content = fpath.read_text(encoding="utf-8")
             except Exception:
                 continue
+            
+            # Eski CommandHandler pattern
             matches = handler_pattern.findall(content)
             for cmd in matches:
                 desc = COMMAND_INFO.get(cmd.lower(), "(açıklama yok)")
                 commands[f"/{cmd}"] = f"{desc} ({fname})"
+            
+            # Yeni Router pattern
+            router_matches = router_pattern.findall(content)
+            for _, cmd in router_matches:
+                desc = COMMAND_INFO.get(cmd.lower(), "(açıklama yok)")
+                commands[f"/{cmd}"] = f"{desc} ({fname})"
+
         return commands
 
     def create_zip(self, tree_text: str, valid_files: List[Path]) -> Path:
@@ -167,9 +173,11 @@ def get_dar_service() -> DarService:
     return DarService()
 
 
-async def dar_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+@router.message(Command("dar"))
+async def dar_command(message: types.Message) -> None:
+    """Handle /dar command with various modes"""
     service = get_dar_service()
-    args: List[str] = context.args or []
+    args = message.text.split()[1:] if message.text else []
     mode = args[0].lower() if args else ""
 
     tree_text, valid_files = service.format_tree()
@@ -177,25 +185,29 @@ async def dar_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     if mode == "k":
         scanned = service.scan_handlers_for_commands()
         if not scanned:
-            await update.message.reply_text("Komut bulunamadı.")
+            await message.reply("Komut bulunamadı.")
             return
         lines = [f"{cmd} → {desc}" for cmd, desc in sorted(scanned.items())]
         text = "\n".join(lines)
-        await update.message.reply_text(f"<pre>{text}</pre>", parse_mode="HTML")
+        await message.reply(f"<pre>{text}</pre>", parse_mode="HTML")
         return
 
     if mode == "z":
         zip_path = service.create_zip(tree_text, valid_files)
-        with zip_path.open("rb") as f:
-            await update.message.reply_document(document=f, filename=zip_path.name)
-        zip_path.unlink(missing_ok=True)
+        try:
+            document = FSInputFile(zip_path)
+            await message.reply_document(document=document, filename=zip_path.name)
+        finally:
+            zip_path.unlink(missing_ok=True)
         return
 
     if mode == "t":
         txt_path = service.create_all_txt(valid_files)
-        with txt_path.open("rb") as f:
-            await update.message.reply_document(document=f, filename=txt_path.name)
-        txt_path.unlink(missing_ok=True)
+        try:
+            document = FSInputFile(txt_path)
+            await message.reply_document(document=document, filename=txt_path.name)
+        finally:
+            txt_path.unlink(missing_ok=True)
         return
 
     # default: sadece dosya ağacı
@@ -203,17 +215,16 @@ async def dar_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         timestamp = datetime.now().strftime("%m%d_%H%M")
         txt_filename = Path(f"{TELEGRAM_NAME}_{timestamp}.txt")
         txt_filename.write_text(tree_text, encoding="utf-8")
-        with txt_filename.open("rb") as f:
-            await update.message.reply_document(document=f, filename=txt_filename.name)
-        txt_filename.unlink(missing_ok=True)
+        try:
+            document = FSInputFile(txt_filename)
+            await message.reply_document(document=document, filename=txt_filename.name)
+        finally:
+            txt_filename.unlink(missing_ok=True)
     else:
-        await update.message.reply_text(f"<pre>{tree_text}</pre>", parse_mode="HTML")
+        await message.reply_text(f"<pre>{tree_text}</pre>", parse_mode="HTML")
 
 
-async def register(application: Application) -> None:
-    """
-    Application nesnesine /dar handler ekler.
-    Loader bu fonksiyonu await edebilir.
-    """
-    application.add_handler(CommandHandler("dar", dar_command))
-    LOG.info("🟢 /dar handler yüklendi")
+def register_handlers(main_router: Router) -> None:
+    """Register /dar handler to main router"""
+    main_router.include_router(router)
+    logger.info("✅ /dar handler yüklendi")
