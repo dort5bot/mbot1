@@ -7,10 +7,11 @@ Komutlar:
 /Pd → Günlük en çok düşen coinler
 /P coin1 coin2 ... → Manuel seçili coinler (btc, eth, sol gibi)
 
+Aiogram 3.x Router pattern ile uyumlu hale getirilmiştir.
 """
 
 import logging
-from typing import List, Tuple
+from typing import List, Tuple, Optional
 from aiogram import types, Router
 from aiogram.filters import Command
 
@@ -18,7 +19,8 @@ from utils.binance.binance_a import BinanceAPI
 from config import CONFIG
 
 logger = logging.getLogger(__name__)
-router = Router()
+router = Router(name="p_handler")
+
 
 def _format_number(num: float) -> str:
     """Rakamları kısaltmalı formatla (örn. 1234567 → $1.23M)."""
@@ -29,6 +31,7 @@ def _format_number(num: float) -> str:
     if num >= 1e3:
         return f"${num/1e3:.1f}K"
     return f"${num:.1f}"
+
 
 def _format_report(title: str, data: List[Tuple[str, float, float, float]]) -> str:
     """
@@ -48,9 +51,11 @@ def _format_report(title: str, data: List[Tuple[str, float, float, float]]) -> s
         )
     return "\n".join(lines)
 
+
 async def _get_tickers(binance: BinanceAPI) -> List[dict]:
     """Binance spot 24h ticker datasını çek."""
     return await binance.public.get_all_24h_tickers()
+
 
 async def _filter_symbols(symbols: List[str], tickers: List[dict]) -> List[Tuple[str, float, float, float]]:
     """Seçilen sembolleri filtrele ve normalize et (btc → BTCUSDT)."""
@@ -68,6 +73,7 @@ async def _filter_symbols(symbols: List[str], tickers: List[dict]) -> List[Tuple
                 float(ticker.get("lastPrice", 0))
             ))
     return results
+
 
 @router.message(Command("p", "P"))
 async def handle_scan(message: types.Message) -> None:
@@ -146,7 +152,8 @@ async def handle_scan(message: types.Message) -> None:
         logger.error(f"❌ /p komutu işlenirken hata: {e}")
         await message.answer("❌ Bir hata oluştu, lütfen daha sonra tekrar deneyin")
 
-def register_handlers() -> None:
-    """Handler'ları router'a kaydet (aiogram 3.x style)"""
-    # @router decorator zaten handler'ı kaydediyor
+
+def register_handlers(main_router: Router) -> None:
+    """Handler'ları ana router'a kaydet (aiogram 3.x style)"""
+    main_router.include_router(router)
     logger.info("✅ /p komut handler'ı kaydedildi")
