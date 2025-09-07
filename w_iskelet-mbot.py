@@ -5,6 +5,20 @@ Separation of Concerns: İş mantığı, veri erişimi ve presentation katmanlar
 Modülerlik: Her modül bağımsız çalışabilir
 Scalability: Yeni özellikler kolayca eklenebilir
 
+#
+🟨GELİŞTİRME AŞAMASI🟨
+* main.py
+* utils/handler_loader.py
+* handlers/dar_handler.py
+* utils/binance
+* →  handlers/→ binance ham veri sorgulama
+* utils/analysis
+* →  handlers/→ analysis ham veri analizi
+
+
+
+
+
 proje(telegram botu)/
 ├── __init__.py
 ├── main.py
@@ -66,7 +80,7 @@ proje(telegram botu)/
 │ 	│   ├── analysis_a.py 	   # ⭐ → Ana aggregator			
 │ 	│   ├── tremo.py           # A. Trend & Momentum					
 │ 	│   ├── regime.py          # B. Rejim/Volatilite					
-│ 	│   ├── derivs.py          # C. Derivatives					
+│ 	│   ├── derivs.py          # C. Derivatives	(türev ürünler)				
 │ 	│   ├── orderflow.py       # D. Order Flow					
 │ 	│   ├── causality.py       # E. Korelasyon & Lead-Lag					
 │ 	│   ├── onchain.py         # F. On-Chain → ileri seviye (veri erişimi zor olabilir).					
