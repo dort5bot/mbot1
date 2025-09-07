@@ -1,130 +1,191 @@
 """
-/p komutları için Telegram handler.
-
-Komutlar:
-/p → CONFIG.SCAN_SYMBOLS (default filtre, örn. btc → BTCUSDT)
-/Pn → Hacme göre ilk n coin (örn. /P10)
-/Pd → Günlük en çok düşen coinler
-/P coin1 coin2 ... → Manuel seçili coinler (btc, eth, sol gibi)
-
-Aiogram 3.x Router pattern ile uyumlu hale getirilmiştir.
-"""
-"""
-/p komutları için Telegram handler.
+handlers/p_handler.py
+/p →CONFIG.SCAN_SYMBOLS default(filtre ekler btc ile btcusdt sonuç verir)
+/P n → sayı girilirse limit = n oluyor.
+/P d → düşenler.
+/P coin1 coin2... → manuel seçili coinler.
+Binance datasında küçük/büyük fark olsa da eşleşir.
+async uyumlu + PEP8 + type hints + docstring + async yapı + singleton + logging olacak
 """
 
 import logging
-from typing import List, Tuple
+import os
+from typing import List, Optional, Dict, Any, Set
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
-from utils.binance.binance_a import BinanceAPI
-from config import CONFIG
+from utils.binance.binance_a import get_binance_client
 
-logger = logging.getLogger(__name__)
+LOG = logging.getLogger(__name__)
+LOG.addHandler(logging.NullHandler())
 
-def _format_number(num: float) -> str:
-    """Rakamları kısaltmalı formatla (örn. 1234567 → $1.23M)."""
-    if num >= 1e9:
-        return f"${num/1e9:.1f}B"
-    if num >= 1e6:
-        return f"${num/1e6:.1f}M"
-    if num >= 1e3:
-        return f"${num/1e3:.1f}K"
-    return f"${num:.1f}"
+COMMAND: str = "P"
+HELP: str = (
+    "/P → ENV'deki SCAN_SYMBOLS listesi (hacme göre sıralı)\n"
+    "/P n → En çok yükselen n coin (varsayılan 20)\n"
+    "/P d → En çok düşen 20 coin\n"
+    "/P coin1 coin2 ... → Belirtilen coin(ler)"
+)
 
-def _format_report(title: str, data: List[Tuple[str, float, float, float]]) -> str:
-    lines = [f"📈 {title}", "⚡Coin | Değişim | Hacim | Fiyat"]
-    for idx, (symbol, change, volume, price) in enumerate(data, start=1):
-        lines.append(
-            f"{idx}. {symbol}: {change:.2f}% | {_format_number(volume)} | {price}"
-        )
-    return "\n".join(lines)
+# ENV'den SCAN_SYMBOLS oku ve normalize et
+SCAN_SYMBOLS: List[str] = [
+    s.strip().upper() if s.strip().endswith("USDT") else s.strip().upper() + "USDT"
+    for s in os.getenv(
+        "SCAN_SYMBOLS",
+        "BTCUSDT,ETHUSDT,BNBUSDT,SOLUSDT,TRXUSDT,CAKEUSDT,SUIUSDT,PEPEUSDT,ARPAUSDT,TURBOUSDT"
+    ).split(",")
+]
 
-async def _get_tickers(binance: BinanceAPI) -> List[dict]:
-    return await binance.public.get_all_24h_tickers()
 
-async def _filter_symbols(symbols: List[str], tickers: List[dict]) -> List[Tuple[str, float, float, float]]:
-    results = []
-    for s in symbols:
-        symbol = s.upper()
-        if not symbol.endswith("USDT"):
-            symbol = symbol + "USDT"
-        ticker = next((t for t in tickers if t["symbol"] == symbol), None)
-        if ticker:
-            results.append((
-                symbol.replace("USDT", ""),
-                float(ticker.get("priceChangePercent", 0)),
-                float(ticker.get("quoteVolume", 0)),
-                float(ticker.get("lastPrice", 0))
-            ))
-    return results
+def normalize_symbol(sym: str) -> str:
+    """Sembol adını normalize eder (ör. bnb → BNBUSDT)."""
+    sym = sym.strip().upper()
+    if not sym.endswith("USDT"):
+        sym += "USDT"
+    return sym
 
-async def handle_scan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+
+async def fetch_ticker_data(
+    symbols: Optional[List[str]] = None,
+    descending: bool = True,
+    sort_by: str = "change",
+    limit: Optional[int] = None
+) -> List[Dict[str, Any]]:
+    """
+    Binance'ten ticker verilerini alır, filtreler ve sıralar.
+
+    Args:
+        symbols (Optional[List[str]]): İstenen semboller (örn: ["BTC", "ETHUSDT"]).
+        descending (bool): Sıralama yönü. Default True.
+        sort_by (str): "change" veya "volume".
+        limit (Optional[int]): Kaç adet sonuç döneceği.
+
+    Returns:
+        List[Dict[str, Any]]: Ticker verileri.
+    """
     try:
-        args = context.args or []
-        binance = BinanceAPI._instance
-        
-        if not binance:
-            await update.message.reply_text("❌ Binance API bağlantısı kurulamadı")
-            return
-            
-        tickers = await _get_tickers(binance)
+        api = get_binance_client(None, None)
+        data: List[Dict[str, Any]] = await api.get_all_24h_tickers()
 
-        if not args:
-            symbols = CONFIG.SCAN_SYMBOLS
-            data = await _filter_symbols(symbols, tickers)
-            text = _format_report("SCAN_SYMBOLS (Hacme Göre)", data)
+        if not data:
+            LOG.warning("Binance'ten veri alınamadı")
+            return []
 
-        elif args[0].isdigit():
-            n = int(args[0])
-            usdt_tickers = [t for t in tickers if t["symbol"].endswith("USDT")]
-            sorted_data = sorted(
-                (
-                    (
-                        t["symbol"].replace("USDT", ""),
-                        float(t.get("priceChangePercent", 0)),
-                        float(t.get("quoteVolume", 0)),
-                        float(t.get("lastPrice", 0)),
-                    )
-                    for t in usdt_tickers
-                ),
-                key=lambda x: x[2],
-                reverse=True,
-            )
-            data = sorted_data[:min(n, 20)]
-            text = _format_report(f"En Yüksek Hacimli {n} Coin", data)
+        # Sadece USDT pariteleri
+        usdt_pairs: List[Dict[str, Any]] = [
+            d for d in data if d.get("symbol", "").upper().endswith("USDT")
+        ]
 
-        elif args[0].lower() == "d":
-            usdt_tickers = [t for t in tickers if t["symbol"].endswith("USDT")]
-            sorted_data = sorted(
-                (
-                    (
-                        t["symbol"].replace("USDT", ""),
-                        float(t.get("priceChangePercent", 0)),
-                        float(t.get("quoteVolume", 0)),
-                        float(t.get("lastPrice", 0)),
-                    )
-                    for t in usdt_tickers
-                ),
-                key=lambda x: x[1],
-            )
-            data = sorted_data[:20]
-            text = _format_report("Düşüş Trendindeki Coinler", data)
+        # İstenen coinler varsa filtrele
+        if symbols:
+            wanted: Set[str] = {normalize_symbol(s) for s in symbols}
+            usdt_pairs = [
+                d for d in usdt_pairs if d.get("symbol", "").upper() in wanted
+            ]
 
+        # Sıralama
+        if sort_by == "volume":
+            usdt_pairs.sort(key=lambda x: float(x["quoteVolume"]), reverse=True)
         else:
-            symbols = args
-            data = await _filter_symbols(symbols, tickers)
-            if not data:
-                text = "❌ Belirtilen coinler bulunamadı"
-            else:
-                text = _format_report("Seçili Coinler", data)
+            usdt_pairs.sort(
+                key=lambda x: float(x["priceChangePercent"]),
+                reverse=descending
+            )
 
-        await update.message.reply_text(text[:4096])
+        return usdt_pairs[:limit] if limit else usdt_pairs
 
     except Exception as e:
-        logger.error(f"❌ /p komutu işlenirken hata: {e}")
-        await update.message.reply_text("❌ Bir hata oluştu, lütfen daha sonra tekrar deneyin")
+        LOG.error(f"Ticker verisi alınırken hata: {e}")
+        return []
 
-def register_handlers(application: Application) -> None:
-    application.add_handler(CommandHandler(["p", "P"], handle_scan))
-    logger.info("✅ /p komut handler'ı kaydedildi")
+
+def format_report(data: List[Dict[str, Any]], title: str) -> str:
+    """Ticker verilerini okunabilir bir rapor formatına dönüştürür."""
+    if not data:
+        return "Gösterilecek veri yok."
+
+    lines: List[str] = [f"📈 {title}", "⚡Coin | Değişim | Hacim | Fiyat"]
+
+    for i, coin in enumerate(data, start=1):
+        try:
+            symbol: str = coin["symbol"].replace("USDT", "")
+            change: float = float(coin["priceChangePercent"])
+            vol_usd: float = float(coin["quoteVolume"])
+            price: float = float(coin["lastPrice"])
+
+            # Hacim formatı
+            if vol_usd >= 1_000_000_000:
+                vol_fmt = f"${vol_usd/1_000_000_000:.1f}B"
+            elif vol_usd >= 1_000_000:
+                vol_fmt = f"${vol_usd/1_000_000:.1f}M"
+            else:
+                vol_fmt = f"${vol_usd:,.0f}"
+
+            lines.append(
+                f"{i}. {symbol}: {change:+.2f}% | {vol_fmt} | {price:.8f}"
+            )
+
+        except (KeyError, ValueError) as e:
+            LOG.warning(f"Veri formatlama hatası: {e}")
+            continue
+
+    return "\n".join(lines)
+
+
+async def p_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/P komutunu işler ve kripto para verilerini gösterir."""
+    try:
+        if not update.message:
+            return
+
+        args: List[str] = context.args or []
+
+        if not args:
+            # /P → ENV'deki SCAN_SYMBOLS, hacme göre sıralı
+            data = await fetch_ticker_data(symbols=SCAN_SYMBOLS, sort_by="volume")
+            title = "SCAN_SYMBOLS (Hacme Göre)"
+        elif args[0].lower() == "d":
+            # /P d → Düşenler
+            data = await fetch_ticker_data(descending=False, limit=20)
+            title = "Düşüş Trendindeki Coinler"
+        elif args[0].isdigit():
+            # /P n → n sayıda coin
+            n: int = min(int(args[0]), 50)  # Maksimum 50 coin gösterilsin
+            data = await fetch_ticker_data(descending=True, limit=n)
+            title = f"En Çok Yükselen {n} Coin"
+        else:
+            # /P coin1 coin2... → Manuel seçim
+            data = await fetch_ticker_data(symbols=args)
+            title = "Seçili Coinler"
+
+        if not data:
+            await update.message.reply_text(
+                "Veri alınamadı veya eşleşen sembol bulunamadı."
+            )
+            return
+
+        report: str = format_report(data, title)
+
+        # Telegram mesaj sınırı (4096 karakter) kontrolü
+        if len(report) > 4096:
+            report = (
+                report[:4000]
+                + "\n...\n(Mesaj sınırı aşıldı, bazı veriler gösterilemiyor)"
+            )
+
+        await update.message.reply_text(report)
+
+    except Exception as e:
+        LOG.error(f"/P komutu işlenirken hata: {e}")
+        await update.message.reply_text("Bir hata oluştu. Lütfen daha sonra tekrar deneyin.")
+
+
+def register(application: Application) -> None:
+    """Telegram botu için komut işleyicilerini kaydeder."""
+    try:
+        application.add_handler(CommandHandler("p", p_handler))
+        application.add_handler(CommandHandler("P", p_handler))
+        LOG.info("P handler başarıyla kaydedildi.")
+    except Exception as e:
+        LOG.error(f"P handler kaydedilirken hata: {e}")
+
+
