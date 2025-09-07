@@ -15,7 +15,7 @@ import zipfile
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Any
 
 from dotenv import load_dotenv
 from aiogram import Router, types
@@ -224,7 +224,7 @@ async def dar_command(message: types.Message) -> None:
         await message.reply_text(f"<pre>{tree_text}</pre>", parse_mode="HTML")
 
 
-def register_handlers(main_router: Router) -> None:
-    """Register /dar handler to main router"""
-    main_router.include_router(router)
+def register_handlers(application: Any) -> None:
+    """Register /dar handler to application"""
+    application.add_handler(router)
     logger.info("✅ /dar handler yüklendi")
