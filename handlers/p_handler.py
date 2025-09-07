@@ -8,6 +8,7 @@ Binance datasında küçük/büyük fark olsa da eşleşir.
 async uyumlu + PEP8 + type hints + docstring + async yapı + singleton + logging olacak
 """
 
+
 import logging
 import os
 from typing import List, Optional, Dict, Any, Set
@@ -63,8 +64,8 @@ async def fetch_ticker_data(
         List[Dict[str, Any]]: Ticker verileri.
     """
     try:
-        api = get_binance_client(None, None)
-        data: List[Dict[str, Any]] = await api.get_all_24h_tickers()
+        api = get_binance_client()
+        data: List[Dict[str, Any]] = await api.get_ticker_24h()
 
         if not data:
             LOG.warning("Binance'ten veri alınamadı")
@@ -84,10 +85,10 @@ async def fetch_ticker_data(
 
         # Sıralama
         if sort_by == "volume":
-            usdt_pairs.sort(key=lambda x: float(x["quoteVolume"]), reverse=True)
+            usdt_pairs.sort(key=lambda x: float(x.get("quoteVolume", 0)), reverse=descending)
         else:
             usdt_pairs.sort(
-                key=lambda x: float(x["priceChangePercent"]),
+                key=lambda x: float(x.get("priceChangePercent", 0)),
                 reverse=descending
             )
 
@@ -107,10 +108,10 @@ def format_report(data: List[Dict[str, Any]], title: str) -> str:
 
     for i, coin in enumerate(data, start=1):
         try:
-            symbol: str = coin["symbol"].replace("USDT", "")
-            change: float = float(coin["priceChangePercent"])
-            vol_usd: float = float(coin["quoteVolume"])
-            price: float = float(coin["lastPrice"])
+            symbol: str = coin.get("symbol", "").replace("USDT", "")
+            change: float = float(coin.get("priceChangePercent", 0))
+            vol_usd: float = float(coin.get("quoteVolume", 0))
+            price: float = float(coin.get("lastPrice", 0))
 
             # Hacim formatı
             if vol_usd >= 1_000_000_000:
@@ -187,5 +188,3 @@ def register(application: Application) -> None:
         LOG.info("P handler başarıyla kaydedildi.")
     except Exception as e:
         LOG.error(f"P handler kaydedilirken hata: {e}")
-
-
