@@ -90,7 +90,7 @@ class HandlerLoader:
                 logger.error(f"❌ Failed to load handler {full_module}: {e}")
         return loaded_modules
 
-    async def clear_cache(self) -> None:
+    async def clear_handler_cache(self) -> None:
         """
         Handler cache'i temizle (silinen dosyaları kaldır).
         """
@@ -121,31 +121,5 @@ handler_loader = HandlerLoader()
 # Singleton instance
 handler_loader = HandlerLoader()
 
-# ---------------------------------------------------------------------
-# Public async wrapper functions
-# ---------------------------------------------------------------------
-async def load_handlers(application=None):
-    """
-    Public wrapper: Handler dosyalarını yükle.
-    main.py içinden direkt çağrılabilir.
-    """
-    modules = await handler_loader.load_handlers()
-    # Eğer Application nesnesi verilirse handler'ları ekle
-    if application:
-        for module in modules:
-            if hasattr(module, "register"):
-                try:
-                    module.register(application)
-                    logger.info(f"🔗 Registered handlers from {module.__name__}")
-                except Exception as e:
-                    logger.error(f"❌ Failed to register handlers from {module.__name__}: {e}")
-    return modules
 
-
-async def clear_handler_cache():
-    """
-    Public wrapper: Handler cache temizle.
-    main.py içinden direkt çağrılabilir.
-    """
-    await handler_loader.clear_cache()
 
