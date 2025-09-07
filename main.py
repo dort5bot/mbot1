@@ -7,7 +7,6 @@ Free tier (Render, Railway, Oracle) uyumlu webhook setup.
 - Handler loader ile dinamik handler import
 - Webhook endpoint: /webhook/<TOKEN>
 Geliştirilmiş özelliklerle: config management, enhanced health check, error resilience.
-Aiogram 3.x Router pattern desteği
 """
 
 import os
@@ -183,4 +182,55 @@ async def on_startup(app: web.Application) -> None:
         webhook_url = f"{config.base_url}{config.webhook_path}"
         LOG.info(f"🌐 Setting webhook URL: {webhook_url}")
         
-        # Önce mevcut webhook'u tem
+        # Önce mevcut webhook'u temizle
+        await application.bot.delete_webhook()
+        await asyncio.sleep(1)
+        
+        # Yeni webhook'u ayarla
+        await application.bot.set_webhook(webhook_url)
+        LOG.info("✅ Webhook set successfully")
+        
+    except Exception as e:
+        LOG.error(f"❌ Startup error: {e}")
+        raise
+
+async def on_shutdown(app: web.Application) -> None:
+    """Bot shutdown: webhook temizleme."""
+    LOG.info("🛑 Bot kapatılıyor...")
+    try:
+        await application.bot.delete_webhook()
+        await application.shutdown()
+        LOG.info("✅ Webhook removed and application shutdown complete")
+    except Exception as e:
+        LOG.error(f"❌ Shutdown error: {e}")
+
+# ---------------------------------------------------------------------
+# Main Application Setup
+# ---------------------------------------------------------------------
+def main() -> None:
+    """Ana uygulama entry point."""
+    LOG.info("🚀 Starting Telegram bot application...")
+    
+    # Web server oluştur
+    app = web.Application()
+    
+    # Route'ları ekle
+    app.router.add_post(config.webhook_path, webhook_handler)
+    app.router.add_get("/health", health_handler)
+    app.router.add_get("/handlers", handlers_handler)
+    
+    # Startup/shutdown event handlers
+    app.on_startup.append(on_startup)
+    app.on_shutdown.append(on_shutdown)
+    
+    # Server'ı başlat
+    LOG.info(f"🌐 Starting server on port {config.port}")
+    web.run_app(
+        app,
+        host="0.0.0.0",
+        port=config.port,
+        access_log=LOG
+    )
+
+if __name__ == "__main__":
+    main()
