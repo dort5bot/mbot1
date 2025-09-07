@@ -48,7 +48,7 @@ proje(telegram botu)/
 ├── utils/
 │ 	├── binance/						
 │ 	│   ├── __init__.py						
-│ 	│   ├── binance_a.py              # Ana aggregator						
+│ 	│   ├── binance_a.py              # ⭐ Ana aggregator						
 │ 	│   ├── binance_request.py        # HTTP request mekanizması						
 │ 	│   ├── binance_public.py         # Public endpoints						
 │ 	│   ├── binance_private.py        # Private endpoints (API key gerektiren)						
@@ -58,10 +58,12 @@ proje(telegram botu)/
 │ 	│   ├── binance_constants.py      # Sabitler ve enum'lar						
 │ 	│   ├── binance_metrics.py        # Metrik sınıfları						
 │ 	│   └── binance_exceptions.py     # Özel exception'lar						
-│ 	│   └── binance_types.py          # ⭐ YENİ: Type definitions						
-│ 	│				
+│ 	│   └── binance_types.py          # Type definitions						
+│ 	│							
+│ 	│ 		
 │ 	├── analysis/						
-│ 	│   │					
+│ 	│   │		
+│ 	│   ├── analysis_a.py 	   # ⭐ → Ana aggregator			
 │ 	│   ├── tremo.py           # A. Trend & Momentum					
 │ 	│   ├── regime.py          # B. Rejim/Volatilite					
 │ 	│   ├── derivs.py          # C. Derivatives					
@@ -69,7 +71,8 @@ proje(telegram botu)/
 │ 	│   ├── causality.py       # E. Korelasyon & Lead-Lag					
 │ 	│   ├── onchain.py         # F. On-Chain → ileri seviye (veri erişimi zor olabilir).					
 │ 	│   ├── risk.py            # G. Risk Yönetimi (BETA - Koruma)					
-│ 	│   └── score.py           # Final skor birleştirme → tek referans noktası handler direkt buradan çağırır					
+│ 	│   └── score.py           # H. → Skor hesaplama & model birleşimi & 	alt analizlerin sonuçlarıyla  karma skor üretme, trade sinyali çıkarma
+│ 	│		
 │ 	│
 │   └── handler_loader.py      # otomotik handler yükleyici
 │ 
