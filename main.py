@@ -7,6 +7,7 @@ Free tier (Render, Railway, Oracle) uyumlu webhook setup.
 - Handler loader ile dinamik handler import
 - Webhook endpoint: /webhook/<TOKEN>
 Geliştirilmiş özelliklerle: config management, enhanced health check, error resilience.
+Aiogram 3.x Router pattern desteği
 """
 
 import os
@@ -16,6 +17,7 @@ from aiohttp import web
 from dotenv import load_dotenv
 from telegram import Update
 from telegram.ext import Application
+from aiogram import Router
 
 from utils.handler_loader import load_handlers, clear_handler_cache, get_handler_status
 
@@ -93,13 +95,14 @@ LOG.info(f"🌐 Base URL: {config.base_url}")
 LOG.info(f"🚪 Port: {config.port}")
 
 # ---------------------------------------------------------------------
-# Global Application
+# Global Application & Router
 # ---------------------------------------------------------------------
 if not config.validate():
     LOG.error("❌ Invalid configuration. Exiting...")
     exit(1)
 
 application: Application = Application.builder().token(config.token).build()
+main_router = Router()
 
 # ---------------------------------------------------------------------
 # Webhook Handler
@@ -129,6 +132,7 @@ async def health_handler(request: web.Request) -> web.Response:
             "status": "ok", 
             "platform": config.platform,
             "handlers_loaded": handler_status['total_handlers'],
+            "routers_loaded": handler_status['total_routers'],
             "webhook_set": webhook_status.url if webhook_status else False,
             "webhook_url": webhook_status.url if webhook_status else "Not set",
             "pending_updates": webhook_status.pending_update_count if webhook_status else 0
@@ -164,107 +168,19 @@ async def on_startup(app: web.Application) -> None:
             LOG.info(f"🧹 Cleared {len(clear_result['removed'])} handlers from cache")
         
         # Handler'ları yükle ve kaydet
-        load_result = await load_handlers(application)
+        load_result = await load_handlers(application, main_router)
         
         if load_result['failed']:
             LOG.warning(f"⚠️  {len(load_result['failed'])} handlers failed to load")
         else:
             LOG.info(f"✅ {len(load_result['loaded'])} handlers loaded, {len(load_result['registered'])} registered successfully")
 
+        # Ana router'ı application'a ekle
+        application.include_router(main_router)
+        LOG.info(f"✅ Main router included with {len(main_router.message.handlers)} message handlers")
+
         # Webhook ayarla
         webhook_url = f"{config.base_url}{config.webhook_path}"
         LOG.info(f"🌐 Setting webhook URL: {webhook_url}")
         
-        # Önce mevcut webhook'u temizle
-        await application.bot.delete_webhook(drop_pending_updates=True)
-        
-        # Yeni webhook'u set et
-        await application.bot.set_webhook(
-            webhook_url,
-            max_connections=50,
-            allowed_updates=["message", "callback_query", "chat_member"]
-        )
-        LOG.info("✅ Webhook başarıyla set edildi")
-        
-    except Exception as e:
-        LOG.error(f"❌ Startup error: {e}")
-        raise
-
-async def on_shutdown(app: web.Application) -> None:
-    """Graceful shutdown - Free tier'lar sık restart eder"""
-    LOG.info("🛑 Bot kapatılıyor...")
-    try:
-        # Webhook'u temizle (optional)
-        await application.bot.delete_webhook()
-        LOG.info("✅ Webhook temizlendi")
-    except Exception as e:
-        LOG.warning(f"⚠️  Webhook cleanup failed: {e}")
-    
-    # Application'ı kapat
-    await application.stop()
-    await application.shutdown()
-    LOG.info("✅ Bot başarıyla kapatıldı")
-
-# ---------------------------------------------------------------------
-# Main Entrypoint - Webhook modunda
-# ---------------------------------------------------------------------
-async def main() -> None:
-    """Ana uygulama entrypoint"""
-    LOG.info(f"🚀 Starting bot on {config.platform} platform...")
-    LOG.info(f"📊 PORT: {config.port}, BASE_URL: {config.base_url}")
-
-    try:
-        # aiohttp web application
-        web_app = web.Application()
-        
-        # Routes
-        web_app.router.add_post(config.webhook_path, webhook_handler)
-        web_app.router.add_get("/health", health_handler)
-        web_app.router.add_get("/", health_handler)
-        web_app.router.add_get("/handlers", handlers_handler)  # Opsiyonel: handler durum endpoint'i
-        
-        # Lifecycle events
-        web_app.on_startup.append(on_startup)
-        web_app.on_shutdown.append(on_shutdown)
-
-        # Server setup
-        runner = web.AppRunner(web_app)
-        await runner.setup()
-        
-        # 0.0.0.0 binding (tüm interfacelere açık)
-        site = web.TCPSite(runner, "0.0.0.0", config.port)
-        await site.start()
-        
-        LOG.info(f"🌐 Server started on port {config.port}")
-        LOG.info(f"🔧 Health check: {config.base_url}/health")
-        LOG.info(f"📨 Webhook endpoint: {config.base_url}{config.webhook_path}")
-
-        # Telegram application'ı başlat
-        await application.initialize()
-        await application.start()
-        LOG.info("✅ Telegram application started")
-
-        # Sonsuz bekleyiş
-        await asyncio.Event().wait()
-
-    except Exception as e:
-        LOG.error(f"💥 Critical error: {e}")
-        raise
-    finally:
-        # Cleanup garantile
-        if 'runner' in locals():
-            await runner.cleanup()
-        LOG.info("👋 Application terminated")
-
-# ---------------------------------------------------------------------
-# Entrypoint
-# ---------------------------------------------------------------------
-if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        LOG.info("🛑 Manual shutdown detected")
-    except Exception as e:
-        LOG.error(f"🚨 Fatal error: {e}")
-    finally:
-        LOG.info("📴 Bot completely shut down")
+        # Önce mevcut webhook'u tem
