@@ -84,15 +84,27 @@ async def on_shutdown(app: web.Application) -> None:
 
 # ---------------------------------------------------------------------
 # Main Entrypoint
+#  webhook kullanılacak
 # ---------------------------------------------------------------------
 async def main() -> None:
     LOG.info("Event loop başlatılıyor...")
+
+    # Handler cache temizle ve handlerları yükle
+    await clear_handler_cache()
+    await load_handlers(application)
+    LOG.info("✅ Tüm handler'lar başarıyla yüklendi.")
+
+    # Webhook ayarla
+    webhook_url = f"{BASE_URL}/webhook/{TELEGRAM_TOKEN}"
+    await application.bot.delete_webhook(drop_pending_updates=True)
+    await application.bot.set_webhook(webhook_url)
+    LOG.info("🌐 Webhook set edildi: %s", webhook_url)
 
     # aiohttp server
     web_app = web.Application()
     web_app.router.add_post(f"/webhook/{TELEGRAM_TOKEN}", webhook_handler)
 
-    web_app.on_startup.append(on_startup)
+    # Shutdown handler'ı ekle
     web_app.on_shutdown.append(on_shutdown)
 
     runner = web.AppRunner(web_app)
@@ -102,13 +114,17 @@ async def main() -> None:
 
     LOG.info("🚀 Webhook server started on port %s", PORT)
 
-    # Telegram Application run
+    # Application'ı başlat (updater OLMADAN)
     await application.initialize()
     await application.start()
-    await application.updater.start_polling()  # update_queue için gerekli
 
     # Sonsuza kadar bekle
-    await asyncio.Event().wait()
+    try:
+        await asyncio.Event().wait()
+    except (KeyboardInterrupt, SystemExit):
+        LOG.info("🛑 Bot kapatılıyor...")
+        await application.stop()
+        await application.shutdown()
 
 
 if __name__ == "__main__":
