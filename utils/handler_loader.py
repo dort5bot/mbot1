@@ -23,8 +23,6 @@ import inspect
 from types import ModuleType
 from typing import Dict, List, Optional, Any, Tuple
 
-from aiogram import Router
-
 logger = logging.getLogger(__name__)
 
 
@@ -46,14 +44,12 @@ class HandlerLoader:
     def _initialize(self, handlers_dir: str) -> None:
         self.handlers_dir = handlers_dir
         self._cache: Dict[str, ModuleType] = {}
-        self._routers: Dict[str, Router] = {}
         logger.info(f"📁 Handler directory set to: {handlers_dir}")
 
     def set_handlers_dir(self, handlers_dir: str) -> None:
         """Runtime'da handlers directory değiştirmek için"""
         self.handlers_dir = handlers_dir
         self._cache.clear()
-        self._routers.clear()
         logger.info(f"🔄 Handler directory changed to: {handlers_dir}")
 
     def _discover_handler_files(self) -> List[str]:
@@ -78,7 +74,7 @@ class HandlerLoader:
         logger.info(f"🔍 Found {len(handler_files)} handler files")
         return handler_files
 
-    async def load_handlers(self, application: Optional[Any] = None, main_router: Optional[Router] = None) -> Dict[str, List[str]]:
+    async def load_handlers(self, application: Optional[Any] = None) -> Dict[str, List[str]]:
         """
         Handler dosyalarını yükle ve isteğe bağlı olarak kaydet.
         Returns:
@@ -107,21 +103,15 @@ class HandlerLoader:
                 result['loaded'].append(full_module)
                 logger.info(f"✅ Loaded handler: {full_module}")
                 
-                # Eğer Application ve Router nesnesi verilirse handler'ları kaydet
-                if application and main_router and hasattr(module, "register_handlers"):
+                # Eğer Application nesnesi verilirse handler'ları kaydet
+                if application and hasattr(module, "register_handlers"):
                     try:
-                        module.register_handlers(main_router)
+                        module.register_handlers(application)
                         result['registered'].append(full_module)
                         logger.info(f"🔗 Registered handlers from {module.__name__}")
                     except Exception as e:
                         logger.error(f"❌ Failed to register handlers from {module.__name__}: {e}")
                         result['failed'].append(f"{full_module} (register error: {e})")
-                
-                # Router'ı bul ve kaydet
-                router = self._find_router_in_module(module)
-                if router:
-                    self._routers[full_module] = router
-                    logger.info(f"📋 Found router in {module.__name__}: {router.name}")
                         
             except Exception as e:
                 logger.error(f"❌ Failed to load handler {full_module}: {e}")
@@ -133,14 +123,7 @@ class HandlerLoader:
         
         return result
 
-    def _find_router_in_module(self, module: ModuleType) -> Optional[Router]:
-        """Module içinde Router nesnesi bul"""
-        for name, obj in inspect.getmembers(module):
-            if isinstance(obj, Router):
-                return obj
-        return None
-
-    async def reload_handler(self, module_name: str, application: Optional[Any] = None, main_router: Optional[Router] = None) -> Tuple[bool, str]:
+    async def reload_handler(self, module_name: str, application: Optional[Any] = None) -> Tuple[bool, str]:
         """
         Belirli bir handler'ı yeniden yükler.
         Returns: (success: bool, message: str)
@@ -157,16 +140,10 @@ class HandlerLoader:
             
             self._cache[full_module] = module
 
-            # Router'ı güncelle
-            router = self._find_router_in_module(module)
-            if router:
-                self._routers[full_module] = router
-                logger.info(f"📋 Updated router in {module.__name__}: {router.name}")
-
-            # Eğer Application ve Router nesnesi verilirse handler'ları yeniden kaydet
-            if application and main_router and hasattr(module, "register_handlers"):
+            # Eğer Application nesnesi verilirse handler'ları yeniden kaydet
+            if application and hasattr(module, "register_handlers"):
                 try:
-                    module.register_handlers(main_router)
+                    module.register_handlers(application)
                     logger.info(f"🔗 Re-registered handlers from {module.__name__}")
                     return True, f"Handler {full_module} reloaded and re-registered successfully"
                 except Exception as e:
@@ -195,7 +172,6 @@ class HandlerLoader:
             if not os.path.exists(full_path):
                 sys.modules.pop(module_name, None)
                 self._cache.pop(module_name, None)
-                self._routers.pop(module_name, None)
                 result['removed'].append(module_name)
                 result['remaining'].remove(module_name)
 
@@ -208,10 +184,6 @@ class HandlerLoader:
         """Yüklenmiş handler modüllerini döndür."""
         return self._cache
 
-    def get_loaded_routers(self) -> Dict[str, Router]:
-        """Yüklenmiş router'ları döndür."""
-        return self._routers
-
     def get_handler_count(self) -> int:
         """Yüklenmiş handler sayısını döndür."""
         return len(self._cache)
@@ -223,20 +195,20 @@ handler_loader = HandlerLoader()
 # ---------------------------------------------------------------------
 # Public async wrapper functions
 # ---------------------------------------------------------------------
-async def load_handlers(application: Optional[Any] = None, main_router: Optional[Router] = None) -> Dict[str, List[str]]:
+async def load_handlers(application: Optional[Any] = None) -> Dict[str, List[str]]:
     """
     Public wrapper: Handler dosyalarını yükle.
     Returns: {'loaded': [], 'failed': [], 'registered': []}
     """
-    return await handler_loader.load_handlers(application, main_router)
+    return await handler_loader.load_handlers(application)
 
 
-async def reload_handler(module_name: str, application: Optional[Any] = None, main_router: Optional[Router] = None) -> Tuple[bool, str]:
+async def reload_handler(module_name: str, application: Optional[Any] = None) -> Tuple[bool, str]:
     """
     Public wrapper: Belirli bir handler'ı yeniden yükler.
     Returns: (success: bool, message: str)
     """
-    return await handler_loader.reload_handler(module_name, application, main_router)
+    return await handler_loader.reload_handler(module_name, application)
 
 
 async def clear_handler_cache() -> Dict[str, List[str]]:
@@ -253,11 +225,8 @@ async def get_handler_status() -> Dict[str, Any]:
     Returns: {'total_handlers': int, 'loaded_handlers': List[str]}
     """
     handlers = await handler_loader.get_loaded_handlers()
-    routers = handler_loader.get_loaded_routers()
     
     return {
         'total_handlers': len(handlers),
-        'loaded_handlers': list(handlers.keys()),
-        'total_routers': len(routers),
-        'loaded_routers': list(routers.keys())
+        'loaded_handlers': list(handlers.keys())
     }
