@@ -91,9 +91,7 @@ LOG.info(f"🏗️  Platform detected: {config.platform}")
 LOG.info(f"🌐 Base URL: {config.base_url}")
 LOG.info(f"🚪 Port: {config.port}")
 
-# ---------------------------------------------------------------------
 # Global Application
-# ---------------------------------------------------------------------
 if not config.validate():
     LOG.error("❌ Invalid configuration. Exiting...")
     exit(1)
@@ -108,7 +106,7 @@ async def webhook_handler(request: web.Request) -> web.Response:
     try:
         data = await request.json()
         update: Update = Update.de_json(data, application.bot)
-        await application.update_queue.put(update)
+        await application.process_update(update)  # Değişiklik burada
         return web.Response(status=200)
     except Exception as e:
         LOG.error(f"❌ Webhook error: {e}")
