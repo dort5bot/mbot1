@@ -9,18 +9,18 @@ Komutlar:
 
 Aiogram 3.x Router pattern ile uyumlu hale getirilmiştir.
 """
+"""
+/p komutları için Telegram handler.
+"""
 
 import logging
-from typing import List, Tuple, Optional, Any
-from aiogram import types, Router
-from aiogram.filters import Command
-
+from typing import List, Tuple
+from telegram import Update
+from telegram.ext import Application, CommandHandler, ContextTypes
 from utils.binance.binance_a import BinanceAPI
 from config import CONFIG
 
 logger = logging.getLogger(__name__)
-router = Router(name="p_handler")
-
 
 def _format_number(num: float) -> str:
     """Rakamları kısaltmalı formatla (örn. 1234567 → $1.23M)."""
@@ -32,18 +32,7 @@ def _format_number(num: float) -> str:
         return f"${num/1e3:.1f}K"
     return f"${num:.1f}"
 
-
 def _format_report(title: str, data: List[Tuple[str, float, float, float]]) -> str:
-    """
-    Raporu string formatında hazırla.
-
-    Args:
-        title: Başlık
-        data: (symbol, priceChangePercent, volume, lastPrice)
-
-    Returns:
-        Hazır mesaj stringi
-    """
     lines = [f"📈 {title}", "⚡Coin | Değişim | Hacim | Fiyat"]
     for idx, (symbol, change, volume, price) in enumerate(data, start=1):
         lines.append(
@@ -51,14 +40,10 @@ def _format_report(title: str, data: List[Tuple[str, float, float, float]]) -> s
         )
     return "\n".join(lines)
 
-
 async def _get_tickers(binance: BinanceAPI) -> List[dict]:
-    """Binance spot 24h ticker datasını çek."""
     return await binance.public.get_all_24h_tickers()
 
-
 async def _filter_symbols(symbols: List[str], tickers: List[dict]) -> List[Tuple[str, float, float, float]]:
-    """Seçilen sembolleri filtrele ve normalize et (btc → BTCUSDT)."""
     results = []
     for s in symbols:
         symbol = s.upper()
@@ -67,40 +52,30 @@ async def _filter_symbols(symbols: List[str], tickers: List[dict]) -> List[Tuple
         ticker = next((t for t in tickers if t["symbol"] == symbol), None)
         if ticker:
             results.append((
-                symbol.replace("USDT", ""),  # sadece coin ismi
+                symbol.replace("USDT", ""),
                 float(ticker.get("priceChangePercent", 0)),
                 float(ticker.get("quoteVolume", 0)),
                 float(ticker.get("lastPrice", 0))
             ))
     return results
 
-
-@router.message(Command("p", "P"))
-async def handle_scan(message: types.Message) -> None:
-    """
-    /p komutlarını işle.
-
-    Args:
-        message: Telegram message
-    """
+async def handle_scan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
-        args = message.text.split()[1:]  # /p'den sonraki argümanlar
+        args = context.args or []
         binance = BinanceAPI._instance
         
         if not binance:
-            await message.answer("❌ Binance API bağlantısı kurulamadı")
+            await update.message.reply_text("❌ Binance API bağlantısı kurulamadı")
             return
             
         tickers = await _get_tickers(binance)
 
         if not args:
-            # default: CONFIG.SCAN_SYMBOLS
             symbols = CONFIG.SCAN_SYMBOLS
             data = await _filter_symbols(symbols, tickers)
             text = _format_report("SCAN_SYMBOLS (Hacme Göre)", data)
 
         elif args[0].isdigit():
-            # /Pn → hacimli ilk n
             n = int(args[0])
             usdt_tickers = [t for t in tickers if t["symbol"].endswith("USDT")]
             sorted_data = sorted(
@@ -113,14 +88,13 @@ async def handle_scan(message: types.Message) -> None:
                     )
                     for t in usdt_tickers
                 ),
-                key=lambda x: x[2],  # volume'a göre sırala
+                key=lambda x: x[2],
                 reverse=True,
             )
-            data = sorted_data[:min(n, 20)]  # max 20 coin
+            data = sorted_data[:min(n, 20)]
             text = _format_report(f"En Yüksek Hacimli {n} Coin", data)
 
         elif args[0].lower() == "d":
-            # /Pd → düşenler
             usdt_tickers = [t for t in tickers if t["symbol"].endswith("USDT")]
             sorted_data = sorted(
                 (
@@ -132,13 +106,12 @@ async def handle_scan(message: types.Message) -> None:
                     )
                     for t in usdt_tickers
                 ),
-                key=lambda x: x[1],  # change %'ye göre sırala (en düşük)
+                key=lambda x: x[1],
             )
-            data = sorted_data[:20]  # ilk 20 düşen
+            data = sorted_data[:20]
             text = _format_report("Düşüş Trendindeki Coinler", data)
 
         else:
-            # manuel seçilen coinler
             symbols = args
             data = await _filter_symbols(symbols, tickers)
             if not data:
@@ -146,15 +119,12 @@ async def handle_scan(message: types.Message) -> None:
             else:
                 text = _format_report("Seçili Coinler", data)
 
-        await message.answer(text[:4096])  # Telegram mesaj sınırı
+        await update.message.reply_text(text[:4096])
 
     except Exception as e:
         logger.error(f"❌ /p komutu işlenirken hata: {e}")
-        await message.answer("❌ Bir hata oluştu, lütfen daha sonra tekrar deneyin")
+        await update.message.reply_text("❌ Bir hata oluştu, lütfen daha sonra tekrar deneyin")
 
-
-def register_handlers(application: Any) -> None:
-    """Handler'ları application'a kaydet (aiogram 2.x style)"""
-    # Eski stil: application'a handler'ları doğrudan ekle
-    application.add_handler(router)
+def register_handlers(application: Application) -> None:
+    application.add_handler(CommandHandler(["p", "P"], handle_scan))
     logger.info("✅ /p komut handler'ı kaydedildi")
