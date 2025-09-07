@@ -16,7 +16,6 @@ from aiohttp import web
 from dotenv import load_dotenv
 from telegram import Update
 from telegram.ext import Application
-from aiogram import Router
 
 from utils.handler_loader import load_handlers, clear_handler_cache, get_handler_status
 
@@ -34,7 +33,6 @@ class Config:
         self.webhook_path = f"/webhook/{self.token}"
         self.platform = self._detect_platform()
 
-    #✅ Platform Otomasyonu: Railway: RAILWAY_STATIC_URL/ Render: RENDER_EXTERNAL_URL/ Vercel: VERCEL_URL/ Oracle/VPS: PUBLIC_IP
     def _get_base_url(self) -> str:
         """Platforma göre otomatik BASE_URL belirle"""
         # Railway - Otomatik static URL
@@ -94,18 +92,16 @@ LOG.info(f"🌐 Base URL: {config.base_url}")
 LOG.info(f"🚪 Port: {config.port}")
 
 # ---------------------------------------------------------------------
-# Global Application & Router
+# Global Application
 # ---------------------------------------------------------------------
 if not config.validate():
     LOG.error("❌ Invalid configuration. Exiting...")
     exit(1)
 
 application: Application = Application.builder().token(config.token).build()
-main_router = Router()
 
 # ---------------------------------------------------------------------
 # Webhook Handler
-#Free tier (Render, Railway, Oracle) uyumlu webhook setup.
 # ---------------------------------------------------------------------
 async def webhook_handler(request: web.Request) -> web.Response:
     """Handle Telegram webhook POST requests."""
@@ -167,16 +163,12 @@ async def on_startup(app: web.Application) -> None:
             LOG.info(f"🧹 Cleared {len(clear_result['removed'])} handlers from cache")
         
         # Handler'ları yükle ve kaydet
-        load_result = await load_handlers(application, main_router)
+        load_result = await load_handlers(application)
         
         if load_result['failed']:
             LOG.warning(f"⚠️  {len(load_result['failed'])} handlers failed to load")
         else:
             LOG.info(f"✅ {len(load_result['loaded'])} handlers loaded, {len(load_result['registered'])} registered successfully")
-
-        # Ana router'ı application'a ekle
-        application.include_router(main_router)
-        LOG.info(f"✅ Main router included with {len(main_router.message.handlers)} message handlers")
 
         # Webhook ayarla
         webhook_url = f"{config.base_url}{config.webhook_path}"
