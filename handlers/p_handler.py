@@ -11,7 +11,7 @@ Aiogram 3.x Router pattern ile uyumlu hale getirilmiştir.
 """
 
 import logging
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Any
 from aiogram import types, Router
 from aiogram.filters import Command
 
@@ -153,7 +153,8 @@ async def handle_scan(message: types.Message) -> None:
         await message.answer("❌ Bir hata oluştu, lütfen daha sonra tekrar deneyin")
 
 
-def register_handlers(main_router: Router) -> None:
-    """Handler'ları ana router'a kaydet (aiogram 3.x style)"""
-    main_router.include_router(router)
+def register_handlers(application: Any) -> None:
+    """Handler'ları application'a kaydet (aiogram 2.x style)"""
+    # Eski stil: application'a handler'ları doğrudan ekle
+    application.add_handler(router)
     logger.info("✅ /p komut handler'ı kaydedildi")
