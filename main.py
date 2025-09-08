@@ -258,19 +258,13 @@ async def lifespan():
 # ---------------------------------------------------------------------
 async def health_check(request: web.Request) -> web.Response:
     """Health check endpoint for Render and monitoring."""
-    global app_config
-    
     try:
         services_status = await check_services()
-        di_status = {key: "registered" for key in DIContainer.get_all().keys()}
         
         return web.json_response({
             "status": "healthy",
-            "service": "telegram-bot",
-            "platform": "render" if "RENDER" in os.environ else "local",
-            "environment": "production" if not app_config.DEBUG else "development",
-            "services": services_status,
-            "di_container": di_status,
+            "service": "mbot1-telegram-bot",
+            "platform": "render" if "RENDER" in os.environ else ("railway" if "RAILWAY" in os.environ else "local"),
             "timestamp": asyncio.get_event_loop().time()
         })
     except Exception as e:
