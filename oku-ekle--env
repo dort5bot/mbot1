@@ -80,7 +80,8 @@ DEBUG=True
 # ========================
 
 # 🤖 Telegram Bot Token
-TELEGRAM_BOT_TOKEN=your_telegram_bot_token_here
+TELEGRAM_TOKEN=your_telegram_bot_token_here
+TELEGRAM_NAME=ad
 
 # 👥 Allowed User IDs ( comma separated)
 TELEGRAM_ALLOWED_USER_IDS=123456789,987654321
