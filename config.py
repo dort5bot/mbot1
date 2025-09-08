@@ -24,6 +24,10 @@ _CONFIG_INSTANCE: Optional["BotConfig"] = None
 @dataclass
 class BotConfig:
     """Aiogram 3.x uyumlu bot yapılandırma sınıfı."""
+        def __init__(self):
+        # Platform port compatibility
+        self.WEBAPP_PORT = int(os.getenv('PORT', 3000))  # Render PORT variable
+        self.WEBAPP_HOST = os.getenv('HOST', '0.0.0.0')   # Bind to all interfaces
 
     # ========================
     # 🤖 TELEGRAM BOT SETTINGS
@@ -177,4 +181,5 @@ def get_redis_config() -> Dict[str, Any]:
         "host": config.AIOGRAM_REDIS_HOST,
         "port": config.AIOGRAM_REDIS_PORT,
         "db": config.AIOGRAM_REDIS_DB,
+
     }
