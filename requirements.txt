@@ -1,21 +1,25 @@
 #♦️requirements.txt (alfabetik)
-aiogram==3.22.0  # Kararlı en son sürüm
-aiohttp>=3.8.0
-aiolimiter
-binance-connector>=3.0.0
+#Büyük paketler (pandas, numpy, cryptography) için binary wheel tercih edilir.
+#♦Network sorunları için tutarlı sürümler sabitlenir.
+#♦️requirements.txt (pip uyumlu, alfabetik)
+
+aiogram==3.22.0
+aiohttp==3.8.5
+aiolimiter==1.0.0
+binance-connector==3.0.0
 ccxt==4.5.3
-cryptography>=41.0.0
-flask>=2.3.0
-httpx>=0.23.0
-nest-asyncio>=1.5.0
+cryptography==41.0.3
+flask==2.3.3
+httpx==0.24.1
+nest-asyncio==1.5.7
 numpy==2.0.1
 pandas==2.2.2
-psutil>=5.9.0
+psutil==5.9.5
 python-dateutil==2.9.0.post0
-python-dotenv>=1.0.0
-python-telegram-bot==20.7  # Async destek için
+python-dotenv==1.0.0
+python-telegram-bot==20.7
 pytz==2024.1
 requests==2.32.3
-tzdata>=2023.0
+tzdata==2024.3
 typing-extensions==4.12.2
 websockets==13.0
