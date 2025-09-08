@@ -28,26 +28,9 @@ mbot1/
 ├── .dockerignore            # GHCR yapı dosyası
 │
 │
-GHCR ayarları
-🟥  GitHub Secrets Ayarlama
-GitHub repository settings → Secrets and variables → Actions sayfasında:
-GITHUB_TOKEN (otomatik olarak gelir, eklemenize gerek yok)
-RENDER_DEPLOY_HOOK (Render webhook URL'i, opsiyonel)
-ORACLE_HOST (Oracle VPS IP adresi, opsiyonel)
-ORACLE_SSH_KEY (SSH private key, opsiyonel)
-ORACLE_USER (SSH kullanıcı adı, genellikle "ubuntu", opsiyonel)
-
-🟥 Health Endpoint Ekleme main.py içine
-🟥 Değişiklikleri GitHub'a push edin:
-      git add .
-      git commit -m "GHCR docker deployment setup"
-      git push origin main         
+🟥🟥🟥 GHCR ayarları SAYFA ALTINDA YER ALMAKTADIR   
 🟥 
 🟥 
-
-
-
-
 ├── __init__.py
 ├── main.py
 ├── config.py
@@ -127,3 +110,80 @@ User → Telegram → Handler → Service → Utils → Binance API
                                 Analysis Modules
                                       ↓
 User ← Telegram ← Handler ← Service ← Results
+
+
+🟥🟥🟥🟥🟥
+🟥  GitHub Secrets Ayarlama
+GitHub repository settings → Secrets and variables → Actions sayfasında:
+GITHUB_TOKEN (otomatik olarak gelir, eklemenize gerek yok)
+RENDER_DEPLOY_HOOK (Render webhook URL'i, opsiyonel)
+ORACLE_HOST (Oracle VPS IP adresi, opsiyonel)
+ORACLE_SSH_KEY (SSH private key, opsiyonel)
+ORACLE_USER (SSH kullanıcı adı, genellikle "ubuntu", opsiyonel)
+
+🟥 Health Endpoint Ekleme main.py içine
+🟥 Değişiklikleri GitHub'a push edin:
+      git add .
+      git commit -m "GHCR docker deployment setup"
+      git push origin main   
+
+🟥🟪 RENDER için Ek Adımlar:
+>> Render Dashboard'da:
+"New +" → "Web Service"
+GitHub repo'nu bağla
+Build Command: docker build -t mbot1 .
+Start Command: docker run -p 10000:3000 mbot1
+Plan: Free
+>> Environment Variables:
+bash
+PORT=3000
+PYTHONUNBUFFERED=1
+>> Webhook'u al:
+Settings → "Manual Deploy Hook" → Copy URL
+GitHub Secrets'a RENDER_DEPLOY_HOOK olarak ekle
+
+🟥🟦 RAILWAY için Ek Adımlar:
+Railway Dashboard'da:
+"New Project" → "Deploy from GitHub"
+Repo'yu seç
+Variables: Otomatik environment variables
+Webhook oluştur:
+Settings → "Deploy Hooks" → "Create Deploy Hook"
+URL'yi GitHub Secrets'a RAILWAY_DEPLOY_HOOK olarak ekle
+
+
+🟥🟧 ORACLE VPS için Ek Adımlar:
+VPS'de Docker Kurulumu:HEPSİ KOD
+
+# Oracle Ubuntu VPS'ye bağlan
+ssh ubuntu@your-oracle-ip
+
+# Docker kur
+sudo apt update
+sudo apt install docker.io
+sudo systemctl enable docker
+sudo usermod -aG docker ubuntu
+
+# Docker Compose kur (opsiyonel)
+sudo apt install docker-compose
+GHCR Login (VPS'de):
+
+# Personal Access Token ile login
+echo $GHCR_TOKEN | docker login ghcr.io -u USERNAME --password-stdin
+SSH Key Oluşturma:
+
+# Lokalde SSH key pair oluştur
+ssh-keygen -t rsa -b 4096 -f oracle_deploy_key
+
+# Public key'i VPS'ye ekle
+ssh-copy-id -i oracle_deploy_key.pub ubuntu@your-oracle-ip
+
+
+🟥🟧🟥🟧GitHub Secrets Ayarları:
+Secret Adı	Değer	Platform
+RENDER_DEPLOY_HOOK	https://api.render.com/deploy/...	Render
+RAILWAY_DEPLOY_HOOK	https://api.railway.app/...	Railway
+ORACLE_HOST	123.45.67.89	Oracle VPS
+ORACLE_SSH_KEY	-----BEGIN PRIVATE KEY-----...	Oracle VPS
+ORACLE_USER	ubuntu	Oracle VPS
+GHCR_TOKEN	github_pat_...	Tümü (opsiyonel)
