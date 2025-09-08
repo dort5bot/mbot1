@@ -1,5 +1,4 @@
-#dockerfile
-# 🐍 Python 3.11 slim base image
+# dockerfile
 FROM python:3.11-slim AS builder
 
 WORKDIR /app
@@ -15,28 +14,32 @@ RUN apt-get update && apt-get install -y \
 COPY requirements.txt .
 RUN pip install --user --no-cache-dir -r requirements.txt
 
-# 🔒 Runtime stage - daha güvenli
 FROM python:3.11-slim AS runtime
 
 WORKDIR /app
 
-# Non-root user oluştur (güvenlik için)
+# Non-root user oluştur
 RUN groupadd --gid 1001 appgroup && \
     useradd --uid 1001 --gid appgroup --shell /bin/bash --create-home appuser
+
+# Environment variables for optimization
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONPYCACHEPREFIX=/tmp \
+    UV_THREAD_POOL_SIZE=2 \
+    UV_WORKERS=2
 
 # Builder stage'den Python paketlerini kopyala
 COPY --from=builder --chown=appuser:appgroup /root/.local /home/appuser/.local
 COPY --chown=appuser:appgroup . .
 
 # PATH'e user Python paketlerini ekle
-ENV PATH="/home/appuser/.local/bin:${PATH}" \
-    PYTHONUNBUFFERED="1" \
-    PYTHONDONTWRITEBYTECODE="1"
+ENV PATH="/home/appuser/.local/bin:${PATH}"
 
 # Port bilgisi
 EXPOSE 3000
 
-# Health check (main.py'de health endpoint olmalı)
+# Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
   CMD curl -f http://localhost:3000/health || exit 1
 
