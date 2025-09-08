@@ -1,20 +1,21 @@
 #♦️requirements.txt (alfabetik)
-aiogram>=3.22.0
+aiogram==3.22.0  # Kararlı en son sürüm
 aiohttp>=3.8.0
 aiolimiter
 binance-connector>=3.0.0
-ccxt>=4.2.48
+ccxt==4.5.3
 cryptography>=41.0.0
 flask>=2.3.0
 httpx>=0.23.0
 nest-asyncio>=1.5.0
-numpy>=1.24.0
-pandas>=2.0.0
+numpy==2.0.1
+pandas==2.2.2
 psutil>=5.9.0
-python-dateutil>=2.8.0
+python-dateutil==2.9.0.post0
 python-dotenv>=1.0.0
-python-telegram-bot>=20.0
-pytz>=2023.0
-requests>=2.28.0
+python-telegram-bot==20.7  # Async destek için
+pytz==2024.1
+requests==2.32.3
 tzdata>=2023.0
-websockets>=10.0
+typing-extensions==4.12.2
+websockets==13.0
