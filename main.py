@@ -360,17 +360,42 @@ async def create_app() -> web.Application:
         app.router.add_get("/version", version_info)
         
         # Configure webhook handler if webhook is enabled
+        # Webhook handler'ı doğru şekilde kaydedin
         if app_config.WEBHOOK_HOST and app_config.WEBHOOK_PATH:
+            # Webhook handler oluştur
             webhook_handler = SimpleRequestHandler(
                 dispatcher=dispatcher,
                 bot=bot,
                 secret_token=app_config.WEBHOOK_SECRET
             )
             
-            # Register webhook endpoint
-            webhook_path = f"{app_config.WEBHOOK_PATH}/{get_telegram_token()}"
-            webhook_handler.register(app, path=webhook_path)
-            logger.info(f"📨 Webhook endpoint configured: {webhook_path}")
+            # Webhook endpoint route'u
+            webhook_route = f"{app_config.WEBHOOK_PATH}/{{token}}"
+            
+            # POST endpoint'i (Telegram webhook'ları için)
+            app.router.add_post(webhook_route, webhook_handler)
+            
+            # GET endpoint'i (test ve bilgilendirme için)
+            async def webhook_info(request: web.Request):
+                token = request.match_info.get('token', '')
+                valid_token = get_telegram_token()
+                
+                if token == valid_token:
+                    return web.json_response({
+                        "status": "active",
+                        "bot_token": f"{token[:10]}...{token[-6:]}",
+                        "method": "POST",
+                        "message": "Webhook is active. Use POST method for Telegram updates."
+                    })
+                else:
+                    return web.json_response({
+                        "status": "invalid_token",
+                        "message": "The provided token is invalid."
+                    }, status=400)
+            
+            app.router.add_get(webhook_route, webhook_info)
+            
+            logger.info(f"📨 Webhook endpoint configured: {webhook_route}")
         
         # Setup startup/shutdown hooks
         app.on_startup.append(lambda app: on_startup(bot))
