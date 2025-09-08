@@ -20,6 +20,14 @@ Scalability: Yeni özellikler kolayca eklenebilir
 
 
 proje(telegram botu)/
+mbot1/
+├── .github/                  # GHCR yapı dosyası
+│   └── workflows/
+│       └── docker-deploy.yml
+├── Dockerfile               # GHCR yapı dosyası
+├── .dockerignore            # GHCR yapı dosyası
+│
+│
 ├── __init__.py
 ├── main.py
 ├── config.py
