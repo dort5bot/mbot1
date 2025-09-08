@@ -187,3 +187,10 @@ ORACLE_HOST	123.45.67.89	Oracle VPS
 ORACLE_SSH_KEY	-----BEGIN PRIVATE KEY-----...	Oracle VPS
 ORACLE_USER	ubuntu	Oracle VPS
 GHCR_TOKEN	github_pat_...	Tümü (opsiyonel)
+Platforma Özel Secrets:
+            
+Secret Adı	Platform	Nasıl Alınır?
+RENDER_DEPLOY_HOOK	:	Render Dashboard → Web Service → Settings → Manual Deploy Hook
+RAILWAY_TOKEN :	Railway Dashboard → Settings → API → Generate Token
+ORACLE_HOST	Oracle VPS	VPS IP adresi (örn: 123.45.67.89)
+ORACLE_SSH_KEY	Oracle VPS	SSH private key içeriği
