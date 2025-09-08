@@ -28,6 +28,26 @@ mbot1/
 ├── .dockerignore            # GHCR yapı dosyası
 │
 │
+GHCR ayarları
+🟥  GitHub Secrets Ayarlama
+GitHub repository settings → Secrets and variables → Actions sayfasında:
+GITHUB_TOKEN (otomatik olarak gelir, eklemenize gerek yok)
+RENDER_DEPLOY_HOOK (Render webhook URL'i, opsiyonel)
+ORACLE_HOST (Oracle VPS IP adresi, opsiyonel)
+ORACLE_SSH_KEY (SSH private key, opsiyonel)
+ORACLE_USER (SSH kullanıcı adı, genellikle "ubuntu", opsiyonel)
+
+🟥 Health Endpoint Ekleme main.py içine
+🟥 Değişiklikleri GitHub'a push edin:
+      git add .
+      git commit -m "GHCR docker deployment setup"
+      git push origin main         
+🟥 
+🟥 
+
+
+
+
 ├── __init__.py
 ├── main.py
 ├── config.py
