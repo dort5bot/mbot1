@@ -14,11 +14,10 @@ nest-asyncio==1.5.7
 numpy==2.0.1
 pandas==2.2.2
 psutil==5.9.5
+pytz==2024.1
 python-dateutil==2.9.0.post0
 python-dotenv==1.0.0
 python-telegram-bot==20.7
-pytz==2024.1
-requests==2.32.3
 tzdata
 typing-extensions==4.12.2
 websockets==13.0
