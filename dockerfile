@@ -11,11 +11,11 @@ RUN apt-get update && apt-get install -y \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Bağımlılıkları kopyala ve wheel olarak derle
+# Bağımlılıkları kopyala ve wheel olarak derle (--no-deps KALDIRILDI)
 COPY requirements.txt .
-RUN pip wheel --no-cache-dir --no-deps --wheel-dir /app/wheels -r requirements.txt
+RUN pip wheel --no-cache-dir --wheel-dir /app/wheels -r requirements.txt
 
-# requirements.txt'yi de wheels klasörüne kopyala (BU EKSİKTİ)
+# requirements.txt'yi de wheels klasörüne kopyala
 RUN cp requirements.txt /app/wheels/
 
 
@@ -42,7 +42,7 @@ ENV PYTHONUNBUFFERED=1 \
 # Wheel'ları ve requirements.txt'yi kopyala
 COPY --from=builder /app/wheels /wheels
 
-# Wheel'lardan paketleri kur (requirements.txt artık wheels klasöründe)
+# Wheel'lardan paketleri kur
 RUN pip install --no-index --find-links=/wheels -r /wheels/requirements.txt \
     && rm -rf /wheels
 
