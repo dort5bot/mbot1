@@ -1,4 +1,6 @@
-#.github/workflows/docker-deploy.yml
+# .github/workflows/docker-deploy.yml
+## Secrets'ı env den alacak
+# RENDER_DEPLOY_HOOK, ORACLE_SSH_KEY, ORACLE_HOST, ORACLE_USER
 name: 🐳 Docker Build & Deploy
 
 on:
@@ -15,6 +17,11 @@ concurrency:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
+  # Secrets'ı env değişkenlerine ata
+  RENDER_DEPLOY_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK }}
+  ORACLE_SSH_KEY: ${{ secrets.ORACLE_SSH_KEY }}
+  ORACLE_HOST: ${{ secrets.ORACLE_HOST }}
+  ORACLE_USER: ${{ secrets.ORACLE_USER }}
 
 jobs:
   docker-build:
@@ -23,6 +30,7 @@ jobs:
       contents: read
       packages: write
 
+# adımlar
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -59,8 +67,9 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+# adımlar sonu
 
-  deploy:
+   deploy:
     needs: docker-build
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
@@ -70,18 +79,19 @@ jobs:
           echo "📦 Image built successfully: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}"
           echo "🏷 Tags: ${{ needs.docker-build.outputs.tags }}"
           
-      # Render deployment (opsiyonel)
+      # Render deployment - ENV değişkenleriyle kontrol
       - name: Trigger Render Deploy
-        if: secrets.RENDER_DEPLOY_HOOK != ''
+        if: env.RENDER_DEPLOY_HOOK != ''
         run: |
           echo "🚀 Triggering Render deployment..."
-          curl -X POST ${{ secrets.RENDER_DEPLOY_HOOK }}
+          curl -X POST ${{ env.RENDER_DEPLOY_HOOK }}
 
-      # Oracle VPS deployment (opsiyonel)
+      # Oracle VPS deployment - ENV değişkenleriyle kontrol
       - name: Deploy to Oracle VPS
-        if: secrets.ORACLE_SSH_KEY != '' && secrets.ORACLE_HOST != ''
+        if: env.ORACLE_SSH_KEY != '' && env.ORACLE_HOST != ''
         env:
-          SSH_PRIVATE_KEY: ${{ secrets.ORACLE_SSH_KEY }}
+          SSH_PRIVATE_KEY: ${{ env.ORACLE_SSH_KEY }}
+          ORACLE_USER: ${{ env.ORACLE_USER || 'ubuntu' }}
         run: |
           echo "🚀 Deploying to Oracle VPS..."
           
@@ -93,7 +103,7 @@ jobs:
           # SSH ile deploy komutlarını çalıştır
           ssh -o StrictHostKeyChecking=no \
               -i ~/.ssh/deploy_key \
-              ${{ secrets.ORACLE_USER || 'ubuntu' }}@${{ secrets.ORACLE_HOST }} << 'EOF'
+              $ORACLE_USER@${{ env.ORACLE_HOST }} << 'EOF'
             # Docker image'ı çek
             docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
             
