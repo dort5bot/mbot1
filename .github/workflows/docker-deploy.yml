@@ -150,7 +150,10 @@ jobs:
               --health-timeout=10s \
               --health-retries=3 \
               "\$DOCKER_REGISTRY/\$DOCKER_IMAGE_NAME:latest"
-          
+
+            echo "📜 Last 100 logs from container..."
+            docker logs --tail 100 "\$CONTAINER_NAME"  # LOG sınırlama Container ayağa kalktıktan hemen sonra logları GitHub Actions’ın log ekranına düşer.
+            
             echo "🧹 Cleaning up dangling Docker images..."
             docker image prune -f --filter "until=4h"   # 4H DEN ESKİ sadece kullanılmayan eski image'ları siler
           
