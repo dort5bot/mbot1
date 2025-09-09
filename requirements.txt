@@ -2,8 +2,8 @@
 #Büyük paketler (pandas, numpy, cryptography) için binary wheel tercih edilir.
 #♦Network sorunları için tutarlı sürümler sabitlenir.
 #♦️requirements.txt (pip uyumlu, alfabetik)
-aiogram==3.22.0
-aiohttp==3.8.5
+aiogram>=3.22.0
+aiohttp>=3.8.5
 aiolimiter==1.0.0
 binance-connector==3.0.0
 ccxt==4.5.3
