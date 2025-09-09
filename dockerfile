@@ -2,7 +2,7 @@ FROM python:3.11-slim AS builder
 
 WORKDIR /app
 
-# Sistem bağımlılıklarını kur
+# Sistem bağımlılıklarını kur (güncellenmiş)
 RUN apt-get update && apt-get install -y \
     gcc \
     g++ \
@@ -11,7 +11,6 @@ RUN apt-get update && apt-get install -y \
     libssl-dev \
     python3-dev \
     libgomp1 \
-    libatlas-base-dev \
     libopenblas-dev \
     && rm -rf /var/lib/apt/lists/*
 
@@ -27,7 +26,7 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y \
     curl \
     libgomp1 \
-    libopenblas-dev \
+    libopenblas0 \
     && rm -rf /var/lib/apt/lists/*
 
 # Non-root user oluştur
