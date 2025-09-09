@@ -3,13 +3,18 @@ FROM python:3.11-slim AS builder
 
 WORKDIR /app
 
-# Build bağımlılıklarını kur
+# Build bağımlılıklarını kur (eksik paketler eklendi)
 RUN apt-get update && apt-get install -y \
     gcc \
     g++ \
     python3-dev \
+    libc-dev \
+    libffi-dev \
     curl \
     && rm -rf /var/lib/apt/lists/*
+
+# Pip'i güncelle (derleme sorunlarını önlemek için)
+RUN pip install --upgrade pip setuptools wheel
 
 # Bağımlılıkları kopyala ve wheel olarak derle (--no-deps KALDIRILDI)
 COPY requirements.txt .
