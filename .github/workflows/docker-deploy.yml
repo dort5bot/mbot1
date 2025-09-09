@@ -126,18 +126,19 @@ jobs:
           chmod 600 ~/.ssh/deploy_key
           ssh-keyscan -H "${{ env.ORACLE_HOST }}" >> ~/.ssh/known_hosts
 
+          #hiç kullanılmayan eski tag’siz image, durdurulan container, kullanılmayan custom network’leri temizler.
           ssh -i ~/.ssh/deploy_key $USER@${{ env.ORACLE_HOST }} << EOF
             DOCKER_REGISTRY="${{ env.REGISTRY }}"
             DOCKER_IMAGE_NAME="${{ env.IMAGE_NAME }}"
             CONTAINER_NAME="${{ env.CONTAINER_NAME }}"
-
+          
             echo "🐳 Pulling Docker image: \$DOCKER_REGISTRY/\$DOCKER_IMAGE_NAME:latest"
             docker pull "\$DOCKER_REGISTRY/\$DOCKER_IMAGE_NAME:latest"
-
+          
             echo "🛑 Stopping old container..."
             docker stop "\$CONTAINER_NAME" 2>/dev/null || true
             docker rm "\$CONTAINER_NAME" 2>/dev/null || true
-
+          
             echo "🚀 Starting new container..."
             docker run -d \
               --name "\$CONTAINER_NAME" \
@@ -149,8 +150,15 @@ jobs:
               --health-timeout=10s \
               --health-retries=3 \
               "\$DOCKER_REGISTRY/\$DOCKER_IMAGE_NAME:latest"
-
-            docker system prune -f
+          
+            echo "🧹 Cleaning up dangling Docker images..."
+            docker image prune -f   # sadece kullanılmayan eski image'ları siler
+          
+            echo "🧹 Cleaning up unused containers and networks..."
+            docker container prune -f
+            docker network prune -f
+          
             docker ps --filter "name=\$CONTAINER_NAME" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
           EOF
+
           
