@@ -12,7 +12,7 @@
 * apikey hangi aşamada eklenmeli
 
 #
-
+GHCR YAPMADAN İLERLEME
 
 #
 
