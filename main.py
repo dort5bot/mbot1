@@ -15,7 +15,6 @@ import logging
 import signal
 from typing import Optional, Dict, Any
 from contextlib import asynccontextmanager
-from flask import Flask, jsonify    #ghcr için
 
 import aiohttp
 from aiohttp import web
@@ -34,11 +33,7 @@ from utils.binance.binance_request import BinanceHTTPClient
 from utils.binance.binance_circuit_breaker import CircuitBreaker
 from config import BotConfig, get_config, get_telegram_token, get_admins
 
-app = Flask(__name__)          #ghcr için
 
-@app.route('/health')
-def health_check():
-    return jsonify({"status": "healthy", "service": "mbot1"})
     
 # ---------------------------------------------------------------------
 # Config & Logging Setup
