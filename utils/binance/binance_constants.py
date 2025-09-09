@@ -2,7 +2,7 @@
 Binance API constants and configuration.
 """
 
-from typing import Any, Dict, List, Final
+from typing import Any, Dict, Final, List, Optional, Union
 
 # API URLs
 BASE_URL: Final[str] = "https://api.binance.com"
