@@ -1,6 +1,7 @@
 # .github/workflows/docker-deploy.yml
 ## Secrets'ı env den alacak
 # RENDER_DEPLOY_HOOK, ORACLE_SSH_KEY, ORACLE_HOST, ORACLE_USER
+# .github/workflows/docker-deploy.yml
 name: 🐳 Docker Build & Deploy
 
 on:
@@ -30,7 +31,6 @@ jobs:
       contents: read
       packages: write
 
-# adımlar
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -67,9 +67,8 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-# adımlar sonu
 
-   deploy:
+  deploy:  # BU SATIR 2 BOŞLUK GİRİNTİLİ OLMALI
     needs: docker-build
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
