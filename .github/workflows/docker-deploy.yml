@@ -68,6 +68,13 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      - name: Clean Docker Build Cache
+        run: |
+          echo "🧹 Cleaning Docker build cache..."
+          docker builder prune -f
+          docker buildx prune -f
+          docker system prune -f --filter "until=1h"    ##1 saatten eski dosyaları temizler
+
       - name: Cleanup GitHub Actions cache
         if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
         run: |
@@ -146,3 +153,4 @@ jobs:
             docker system prune -f
             docker ps --filter "name=\$CONTAINER_NAME" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
           EOF
+          
