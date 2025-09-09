@@ -15,6 +15,9 @@ RUN apt-get update && apt-get install -y \
 COPY requirements.txt .
 RUN pip wheel --no-cache-dir --no-deps --wheel-dir /app/wheels -r requirements.txt
 
+# requirements.txt'yi de wheels klasörüne kopyala (BU EKSİKTİ)
+RUN cp requirements.txt /app/wheels/
+
 
 # Runtime aşaması
 FROM python:3.11-slim AS runtime
@@ -36,8 +39,10 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONPYCACHEPREFIX=/tmp \
     PIP_NO_CACHE_DIR=1
 
-# Wheel'lardan paketleri kur
+# Wheel'ları ve requirements.txt'yi kopyala
 COPY --from=builder /app/wheels /wheels
+
+# Wheel'lardan paketleri kur (requirements.txt artık wheels klasöründe)
 RUN pip install --no-index --find-links=/wheels -r /wheels/requirements.txt \
     && rm -rf /wheels
 
@@ -54,20 +59,3 @@ USER appuser
 
 # Çalıştırma komutu
 CMD ["python", "main.py"]
-
-
-# Geliştirme aşaması (opsiyonel - sadece development için)
-FROM runtime AS development
-
-USER root
-
-# Geliştirme araçlarını kur
-RUN apt-get update && apt-get install -y \
-    git \
-    vim \
-    && rm -rf /var/lib/apt/lists/*
-
-# Debug modunu etkinleştir
-ENV PYTHONFAULTHANDLER=1
-
-USER appuser
