@@ -2,7 +2,7 @@ FROM python:3.11-slim AS builder
 
 WORKDIR /app
 
-# Sistem bağımlılıklarını kur (geliştirilmiş versiyon)
+# Sistem bağımlılıklarını kur
 RUN apt-get update && apt-get install -y \
     gcc \
     g++ \
@@ -15,9 +15,9 @@ RUN apt-get update && apt-get install -y \
     libopenblas-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Python bağımlılıklarını kopyala ve kur
+# Python bağımlılıklarını kopyala ve global olarak kur
 COPY requirements.txt .
-RUN pip install --user --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
 
 FROM python:3.11-slim AS runtime
 
@@ -37,16 +37,12 @@ RUN groupadd --gid 1001 appgroup && \
 # Environment variables for optimization
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONPYCACHEPREFIX=/tmp \
-    UV_THREAD_POOL_SIZE=2 \
-    UV_WORKERS=2
+    PYTHONPYCACHEPREFIX=/tmp
 
-# Builder stage'den Python paketlerini kopyala
-COPY --from=builder --chown=appuser:appgroup /root/.local /home/appuser/.local
+# Builder stage'den Python paketlerini ve uygulama kodunu kopyala
+COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
+COPY --from=builder /usr/local/bin /usr/local/bin
 COPY --chown=appuser:appgroup . .
-
-# PATH'e user Python paketlerini ekle
-ENV PATH="/home/appuser/.local/bin:${PATH}"
 
 # Port bilgisi
 EXPOSE 3000
