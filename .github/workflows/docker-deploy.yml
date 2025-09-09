@@ -152,7 +152,7 @@ jobs:
               "\$DOCKER_REGISTRY/\$DOCKER_IMAGE_NAME:latest"
           
             echo "🧹 Cleaning up dangling Docker images..."
-            docker image prune -f   # sadece kullanılmayan eski image'ları siler
+            docker image prune -f --filter "until=4h"   # 4H DEN ESKİ sadece kullanılmayan eski image'ları siler
           
             echo "🧹 Cleaning up unused containers and networks..."
             docker container prune -f
