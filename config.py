@@ -24,11 +24,7 @@ _CONFIG_INSTANCE: Optional["BotConfig"] = None
 @dataclass
 class BotConfig:
     """Aiogram 3.x uyumlu bot yapılandırma sınıfı."""
-        def __init__(self):
-        # Platform port compatibility
-        self.WEBAPP_PORT = int(os.getenv('PORT', 3000))  # Render PORT variable
-        self.WEBAPP_HOST = os.getenv('HOST', '0.0.0.0')   # Bind to all interfaces
-
+    
     # ========================
     # 🤖 TELEGRAM BOT SETTINGS
     # ========================
@@ -52,7 +48,7 @@ class BotConfig:
     WEBHOOK_PATH: str = field(default_factory=lambda: os.getenv("WEBHOOK_PATH", ""))
     WEBHOOK_SECRET: str = field(default_factory=lambda: os.getenv("WEBHOOK_SECRET", ""))
     WEBAPP_HOST: str = field(default_factory=lambda: os.getenv("WEBAPP_HOST", "0.0.0.0"))
-    WEBAPP_PORT: int = field(default_factory=lambda: int(os.getenv("WEBAPP_PORT", "3001")))
+    WEBAPP_PORT: int = field(default_factory=lambda: int(os.getenv("PORT", "3000")))  # Render PORT variable
 
     # ========================
     # 🔐 BINANCE API SETTINGS
@@ -181,5 +177,4 @@ def get_redis_config() -> Dict[str, Any]:
         "host": config.AIOGRAM_REDIS_HOST,
         "port": config.AIOGRAM_REDIS_PORT,
         "db": config.AIOGRAM_REDIS_DB,
-
     }
