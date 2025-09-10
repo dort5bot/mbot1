@@ -27,14 +27,8 @@ from aiogram.enums import ParseMode
 from aiogram.filters import BaseFilter
 from aiogram.types import ErrorEvent
 
-from utils.handler_loader import load_handlers, clear_handler_cache
-from utils.binance.binance_a import BinanceAPI
-from utils.binance.binance_request import BinanceHTTPClient
-from utils.binance.binance_circuit_breaker import CircuitBreaker
 from config import BotConfig, get_config, get_telegram_token, get_admins
 
-
-    
 # ---------------------------------------------------------------------
 # Config & Logging Setup
 # ---------------------------------------------------------------------
@@ -51,7 +45,7 @@ logger = logging.getLogger(__name__)
 # Global instances
 bot: Optional[Bot] = None
 dispatcher: Optional[Dispatcher] = None
-binance_api: Optional[BinanceAPI] = None
+binance_api = None
 app_config: Optional[BotConfig] = None
 runner: Optional[web.AppRunner] = None
 
@@ -199,27 +193,8 @@ async def lifespan():
         DIContainer.register('dispatcher', dispatcher)
         DIContainer.register('config', app_config)
         
-        # Initialize Binance API (only if trading is enabled)
-        if app_config.ENABLE_TRADING:
-            http_client = BinanceHTTPClient(
-                api_key=app_config.BINANCE_API_KEY,
-                secret_key=app_config.BINANCE_API_SECRET,
-                base_url=app_config.BINANCE_BASE_URL,
-                timeout=app_config.REQUEST_TIMEOUT
-            )
-            
-            circuit_breaker = CircuitBreaker(
-                failure_threshold=3,  # Default value
-                recovery_timeout=60,  # Default value
-                half_open_attempts=2
-            )
-            
-            binance_api = BinanceAPI(http_client, circuit_breaker)
-            DIContainer.register('binance_api', binance_api)
-            logger.info("✅ Binance API initialized (trading enabled)")
-        else:
-            binance_api = None
-            logger.info("ℹ️ Binance API not initialized (trading disabled)")
+        # Binance API initialization removed for simplicity
+        # You can add it back when needed
         
         logger.info("✅ Application components initialized")
         yield
@@ -230,9 +205,6 @@ async def lifespan():
     finally:
         # Cleanup resources
         cleanup_tasks = []
-        
-        if binance_api:
-            cleanup_tasks.append(binance_api.close())
         
         if bot and hasattr(bot, 'session'):
             cleanup_tasks.append(bot.session.close())
@@ -254,8 +226,6 @@ async def lifespan():
 async def health_check(request: web.Request) -> web.Response:
     """Health check endpoint for Render and monitoring."""
     try:
-        services_status = await check_services()
-        
         return web.json_response({
             "status": "healthy",
             "service": "mbot1-telegram-bot",
@@ -270,13 +240,9 @@ async def health_check(request: web.Request) -> web.Response:
 
 async def readiness_check(request: web.Request) -> web.Response:
     """Readiness check for Kubernetes and load balancers."""
-    global bot, binance_api, app_config
+    global bot, app_config
     
     if bot and app_config:
-        # Binance API is only required if trading is enabled
-        if app_config.ENABLE_TRADING and not binance_api:
-            return web.json_response({"status": "not_ready"}, status=503)
-        
         # Check DI container health
         essential_services = ['bot', 'dispatcher', 'config']
         missing_services = [svc for svc in essential_services if not DIContainer.resolve(svc)]
@@ -293,7 +259,17 @@ async def readiness_check(request: web.Request) -> web.Response:
 
 async def version_info(request: web.Request) -> web.Response:
     """Version and system information endpoint."""
-    return web.json_response(await get_system_info())
+    global app_config
+    
+    return web.json_response({
+        "version": "1.0.0",
+        "platform": "render" if "RENDER" in os.environ else "local",
+        "environment": "production" if not app_config.DEBUG else "development",
+        "python_version": os.sys.version,
+        "aiohttp_version": aiohttp.__version__,
+        "debug_mode": app_config.DEBUG,
+        "trading_enabled": app_config.ENABLE_TRADING if app_config else False
+    })
 
 # ---------------------------------------------------------------------
 # Webhook Setup Functions
@@ -303,13 +279,6 @@ async def on_startup(bot: Bot) -> None:
     global app_config
     
     try:
-        # Clear handler cache and load handlers
-        await clear_handler_cache()
-        load_results = await load_handlers(dispatcher)
-        
-        if load_results["failed"] > 0:
-            logger.warning(f"⚠️ {load_results['failed']} handlers failed to load")
-        
         # Set webhook if webhook is configured
         if app_config.WEBHOOK_HOST and app_config.WEBHOOK_PATH:
             webhook_url = f"{app_config.WEBHOOK_HOST}{app_config.WEBHOOK_PATH}/{get_telegram_token()}"
@@ -356,7 +325,6 @@ async def create_app() -> web.Application:
         app.router.add_get("/version", version_info)
         
         # Configure webhook handler if webhook is enabled
-        # Webhook handler'ı doğru şekilde kaydedin
         if app_config.WEBHOOK_HOST and app_config.WEBHOOK_PATH:
             # Webhook handler oluştur
             webhook_handler = SimpleRequestHandler(
@@ -409,7 +377,7 @@ async def create_app() -> web.Application:
 # ---------------------------------------------------------------------
 async def check_services() -> Dict[str, Any]:
     """Check connectivity to all external services."""
-    global bot, binance_api, app_config
+    global bot, app_config
     
     services_status = {}
     
@@ -431,47 +399,13 @@ async def check_services() -> Dict[str, Any]:
             "error": str(e)
         }
     
-    # Check Binance API (only if trading is enabled)
-    if app_config.ENABLE_TRADING:
-        try:
-            if binance_api:
-                ping_result = await binance_api.ping()
-                services_status["binance"] = {
-                    "status": "connected" if ping_result else "disconnected",
-                    "ping": ping_result,
-                    "trading_enabled": True
-                }
-            else:
-                services_status["binance"] = {"status": "disconnected", "error": "Binance API not initialized", "trading_enabled": True}
-        except Exception as e:
-            services_status["binance"] = {
-                "status": "disconnected",
-                "error": str(e),
-                "trading_enabled": True
-            }
-    else:
-        services_status["binance"] = {
-            "status": "disabled",
-            "trading_enabled": False
-        }
+    # Binance API check removed for simplicity
+    services_status["binance"] = {
+        "status": "disabled",
+        "trading_enabled": app_config.ENABLE_TRADING if app_config else False
+    }
     
     return services_status
-
-async def get_system_info() -> Dict[str, Any]:
-    """Get system information and status."""
-    global app_config
-    
-    return {
-        "version": "1.0.0",
-        "platform": "render" if "RENDER" in os.environ else "local",
-        "environment": "production" if not app_config.DEBUG else "development",
-        "python_version": os.sys.version,
-        "aiohttp_version": aiohttp.__version__,
-        "debug_mode": app_config.DEBUG,
-        "trading_enabled": app_config.ENABLE_TRADING,
-        "services": await check_services(),
-        "di_container_services": list(DIContainer.get_all().keys())
-    }
 
 # ---------------------------------------------------------------------
 # Main Entry Point
