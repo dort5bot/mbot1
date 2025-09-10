@@ -88,7 +88,7 @@ class BotConfig:
     ])
     
     ENABLE_TRADING: bool = field(default_factory=lambda: os.getenv("ENABLE_TRADING", "false").lower() == "true")
-    TRADING_STRATEGY: str = field(default_factory=lambda: os.getenv("TRADING_STRATEGY", "conservative"))
+    TRADING_STRATEGY: str = field(default_factory=lambda: os.getenv("TRADING_STRategy", "conservative"))
     MAX_LEVERAGE: int = field(default_factory=lambda: int(os.getenv("MAX_LEVERAGE", "3")))
     
     # Alert settings
@@ -96,11 +96,9 @@ class BotConfig:
     ENABLE_PRICE_ALERTS: bool = field(default_factory=lambda: os.getenv("ENABLE_PRICE_ALERTS", "true").lower() == "true")
     ALERT_COOLDOWN: int = field(default_factory=lambda: int(os.getenv("ALERT_COOLDOWN", "300")))
 
-    def __init__(self):
-        """Dataclass için özel __init__ metodu - girinti hatası düzeltildi."""
-        # Bu metod dataclass tarafından otomatik olarak oluşturulur,
-        # ancak explicit olarak tanımlanırsa doğru girinti ile olmalı
-        pass
+    # __init__ metodunu tamamen kaldırın - dataclass otomatik oluşturur
+    # def __init__(self):
+    #     """Bu metoda gerek yok, dataclass otomatik oluşturur"""
 
     @classmethod
     def load(cls) -> "BotConfig":
