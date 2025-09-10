@@ -34,6 +34,14 @@ class BotConfig:
         int(x.strip()) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip().isdigit()
     ])
     
+    # Webhook settings
+    USE_WEBHOOK: bool = field(default_factory=lambda: os.getenv("USE_WEBHOOK", "false").lower() == "true")
+    WEBHOOK_HOST: str = field(default_factory=lambda: os.getenv("WEBHOOK_HOST", ""))
+    WEBHOOK_PATH: str = field(default_factory=lambda: os.getenv("WEBHOOK_PATH", ""))
+    WEBHOOK_SECRET: str = field(default_factory=lambda: os.getenv("WEBHOOK_SECRET", ""))
+    WEBAPP_HOST: str = field(default_factory=lambda: os.getenv("WEBAPP_HOST", "0.0.0.0"))
+    WEBAPP_PORT: int = field(default_factory=lambda: int(os.getenv("PORT", "3000")))  # Render PORT variable
+    
     # Aiogram specific settings
     AIOGRAM_REDIS_HOST: str = field(default_factory=lambda: os.getenv("AIOGRAM_REDIS_HOST", "localhost"))
     AIOGRAM_REDIS_PORT: int = field(default_factory=lambda: int(os.getenv("AIOGRAM_REDIS_PORT", "6379")))
@@ -43,13 +51,6 @@ class BotConfig:
     USE_REDIS_FSM: bool = field(default_factory=lambda: os.getenv("USE_REDIS_FSM", "true").lower() == "true")
     FSM_STORAGE_TTL: int = field(default_factory=lambda: int(os.getenv("FSM_STORAGE_TTL", "3600")))
     
-    # Webhook settings (eğer kullanılıyorsa)
-    WEBHOOK_HOST: str = field(default_factory=lambda: os.getenv("WEBHOOK_HOST", ""))
-    WEBHOOK_PATH: str = field(default_factory=lambda: os.getenv("WEBHOOK_PATH", ""))
-    WEBHOOK_SECRET: str = field(default_factory=lambda: os.getenv("WEBHOOK_SECRET", ""))
-    WEBAPP_HOST: str = field(default_factory=lambda: os.getenv("WEBAPP_HOST", "0.0.0.0"))
-    WEBAPP_PORT: int = field(default_factory=lambda: int(os.getenv("PORT", "3000")))  # Render PORT variable
-
     # ========================
     # 🔐 BINANCE API SETTINGS
     # ========================
@@ -96,9 +97,9 @@ class BotConfig:
     ENABLE_PRICE_ALERTS: bool = field(default_factory=lambda: os.getenv("ENABLE_PRICE_ALERTS", "true").lower() == "true")
     ALERT_COOLDOWN: int = field(default_factory=lambda: int(os.getenv("ALERT_COOLDOWN", "300")))
 
-    # __init__ metodunu SİLİN - dataclass otomatik oluşturur
-    # def __init__(self):
-    #     pass
+    # ========================
+    # 🛠️ METHODS
+    # ========================
 
     @classmethod
     def load(cls) -> "BotConfig":
@@ -112,6 +113,13 @@ class BotConfig:
         # Telegram bot validation
         if not self.TELEGRAM_TOKEN:
             errors.append("❌ TELEGRAM_TOKEN gereklidir")
+        
+        # Webhook validation (eğer webhook kullanılıyorsa)
+        if self.USE_WEBHOOK:
+            if not self.WEBHOOK_HOST:
+                errors.append("❌ WEBHOOK_HOST gereklidir (USE_WEBHOOK=true)")
+            if not self.WEBHOOK_PATH:
+                errors.append("❌ WEBHOOK_PATH gereklidir (USE_WEBHOOK=true)")
         
         # Binance validation (eğer trading enabled ise)
         if self.ENABLE_TRADING:

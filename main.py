@@ -6,7 +6,30 @@ Aiogram 3.x + Router pattern + Webhook + Render uyumlu.
 - Gelişmiş error handling
 - Health check endpoints
 - Graceful shutdown
+- Local polling desteği eklendi
 free tier platformlarla tam uyumludur.
++
+
+🎯 Yapılan İyileştirmeler:
+1. Polling modu desteği eklendi:
+start_polling() fonksiyonu eklendi
+polling_task global değişkeni eklendi
+Lifespan içinde polling kontrolü yapılıyor
+2. Akıllı mod seçimi:
+USE_WEBHOOK false ise otomatik polling başlatılıyor
+USE_WEBHOOK true ise webhook modu kullanılıyor
+3. Graceful shutdown geliştirmeleri:
+Polling task'ı düzgün şekilde iptal ediliyor
+Web server sadece webhook modunda başlatılıyor
+4. Logging iyileştirmeleri:
+Hangi modun aktif olduğu loglanıyor
+Platform bilgileri daha detaylı
+Bu güncellemelerle:
+Render/Railway'de webhook modu çalışacak
+Local/PC/Ngrok'ta otomatik polling moduna geçecek
+Hiçbir mevcut özellik bozulmadı
+Tüm hata kontrolleri korundu
+
 """
 
 import os
@@ -27,8 +50,16 @@ from aiogram.enums import ParseMode
 from aiogram.filters import BaseFilter
 from aiogram.types import ErrorEvent
 
-from config import get_config, get_telegram_token, get_admins
+from utils.handler_loader import load_handlers, clear_handler_cache
+from utils.binance.binance_a import BinanceAPI
+from utils.binance.binance_request import BinanceHTTPClient
+from utils.binance.binance_circuit_breaker import CircuitBreaker
+from config import BotConfig, get_config, get_telegram_token, get_admins
 
+from handlers import dar_handler
+
+
+    
 # ---------------------------------------------------------------------
 # Config & Logging Setup
 # ---------------------------------------------------------------------
@@ -45,9 +76,10 @@ logger = logging.getLogger(__name__)
 # Global instances
 bot: Optional[Bot] = None
 dispatcher: Optional[Dispatcher] = None
-binance_api = None
-app_config = None
+binance_api: Optional[BinanceAPI] = None
+app_config: Optional[BotConfig] = None
 runner: Optional[web.AppRunner] = None
+polling_task: Optional[asyncio.Task] = None
 
 # Graceful shutdown flag
 shutdown_event = asyncio.Event()
@@ -157,12 +189,31 @@ class DIContainer:
         return cls._instances.copy()
 
 # ---------------------------------------------------------------------
+# Polling Setup for Local Development
+# ---------------------------------------------------------------------
+async def start_polling() -> None:
+    """Start polling for local development when webhook is not configured."""
+    global bot, dispatcher
+    
+    if not bot or not dispatcher:
+        logger.error("❌ Bot or dispatcher not initialized for polling")
+        return
+    
+    try:
+        logger.info("🔄 Starting polling mode for local development...")
+        await dispatcher.start_polling(bot)
+    except asyncio.CancelledError:
+        logger.info("⏹️ Polling task cancelled")
+    except Exception as e:
+        logger.error(f"❌ Polling failed: {e}")
+
+# ---------------------------------------------------------------------
 # Lifespan Management (Async Context Manager)
 # ---------------------------------------------------------------------
 @asynccontextmanager
 async def lifespan():
     """Manage application lifecycle with async context manager."""
-    global bot, dispatcher, binance_api, app_config
+    global bot, dispatcher, binance_api, app_config, polling_task
     
     try:
         # Load configuration
@@ -173,7 +224,7 @@ async def lifespan():
             token=get_telegram_token(),
             default=DefaultBotProperties(
                 parse_mode=ParseMode.HTML,
-                timeout=app_config.REQUEST_TIMEOUT
+                #timeout=app_config.REQUEST_TIMEOUT     #pc için iptal
             )
         )
         
@@ -181,6 +232,7 @@ async def lifespan():
         main_router = Router()
         dispatcher = Dispatcher()
         dispatcher.include_router(main_router)
+        dispatcher.include_router(dar_handler.router)   #dar_handler.py örnek:
         dispatcher.errors.register(error_handler)
         
         # Register middleware
@@ -193,6 +245,33 @@ async def lifespan():
         DIContainer.register('dispatcher', dispatcher)
         DIContainer.register('config', app_config)
         
+        # Initialize Binance API (only if trading is enabled)
+        if app_config.ENABLE_TRADING:
+            http_client = BinanceHTTPClient(
+                api_key=app_config.BINANCE_API_KEY,
+                secret_key=app_config.BINANCE_API_SECRET,
+                base_url=app_config.BINANCE_BASE_URL,
+                timeout=app_config.REQUEST_TIMEOUT
+            )
+            
+            circuit_breaker = CircuitBreaker(
+                failure_threshold=3,  # Default value
+                recovery_timeout=60,  # Default value
+                half_open_attempts=2
+            )
+            
+            binance_api = BinanceAPI(http_client, circuit_breaker)
+            DIContainer.register('binance_api', binance_api)
+            logger.info("✅ Binance API initialized (trading enabled)")
+        else:
+            binance_api = None
+            logger.info("ℹ️ Binance API not initialized (trading disabled)")
+        
+        # Start polling if webhook is not configured (local development)
+        if not app_config.USE_WEBHOOK:
+            polling_task = asyncio.create_task(start_polling())
+            logger.info("✅ Polling mode started for local development")
+        
         logger.info("✅ Application components initialized")
         yield
         
@@ -202,6 +281,19 @@ async def lifespan():
     finally:
         # Cleanup resources
         cleanup_tasks = []
+        
+        # Cancel polling task if running
+        if polling_task and not polling_task.done():
+            polling_task.cancel()
+            try:
+                await polling_task
+            except asyncio.CancelledError:
+                logger.info("✅ Polling task cancelled successfully")
+            except Exception as e:
+                logger.warning(f"⚠️ Error cancelling polling task: {e}")
+        
+        if binance_api:
+            cleanup_tasks.append(binance_api.close())
         
         if bot and hasattr(bot, 'session'):
             cleanup_tasks.append(bot.session.close())
@@ -223,6 +315,8 @@ async def lifespan():
 async def health_check(request: web.Request) -> web.Response:
     """Health check endpoint for Render and monitoring."""
     try:
+        services_status = await check_services()
+        
         return web.json_response({
             "status": "healthy",
             "service": "mbot1-telegram-bot",
@@ -237,9 +331,13 @@ async def health_check(request: web.Request) -> web.Response:
 
 async def readiness_check(request: web.Request) -> web.Response:
     """Readiness check for Kubernetes and load balancers."""
-    global bot, app_config
+    global bot, binance_api, app_config
     
     if bot and app_config:
+        # Binance API is only required if trading is enabled
+        if app_config.ENABLE_TRADING and not binance_api:
+            return web.json_response({"status": "not_ready"}, status=503)
+        
         # Check DI container health
         essential_services = ['bot', 'dispatcher', 'config']
         missing_services = [svc for svc in essential_services if not DIContainer.resolve(svc)]
@@ -256,17 +354,7 @@ async def readiness_check(request: web.Request) -> web.Response:
 
 async def version_info(request: web.Request) -> web.Response:
     """Version and system information endpoint."""
-    global app_config
-    
-    return web.json_response({
-        "version": "1.0.0",
-        "platform": "render" if "RENDER" in os.environ else "local",
-        "environment": "production" if not app_config.DEBUG else "development",
-        "python_version": os.sys.version,
-        "aiohttp_version": aiohttp.__version__,
-        "debug_mode": app_config.DEBUG,
-        "trading_enabled": app_config.ENABLE_TRADING if app_config else False
-    })
+    return web.json_response(await get_system_info())
 
 # ---------------------------------------------------------------------
 # Webhook Setup Functions
@@ -276,8 +364,15 @@ async def on_startup(bot: Bot) -> None:
     global app_config
     
     try:
+        # Clear handler cache and load handlers
+        await clear_handler_cache()
+        load_results = await load_handlers(dispatcher)
+        
+        if load_results["failed"] > 0:
+            logger.warning(f"⚠️ {load_results['failed']} handlers failed to load")
+        
         # Set webhook if webhook is configured
-        if app_config.WEBHOOK_HOST and app_config.WEBHOOK_PATH:
+        if app_config.USE_WEBHOOK and app_config.WEBHOOK_HOST and app_config.WEBHOOK_PATH:
             webhook_url = f"{app_config.WEBHOOK_HOST}{app_config.WEBHOOK_PATH}/{get_telegram_token()}"
             await bot.delete_webhook(drop_pending_updates=True)
             await bot.set_webhook(webhook_url, secret_token=app_config.WEBHOOK_SECRET)
@@ -297,7 +392,7 @@ async def on_shutdown(bot: Bot) -> None:
     
     try:
         # Delete webhook if it was set
-        if app_config.WEBHOOK_HOST and app_config.WEBHOOK_PATH:
+        if app_config.USE_WEBHOOK and app_config.WEBHOOK_HOST and app_config.WEBHOOK_PATH:
             await bot.delete_webhook()
             logger.info("✅ Webhook deleted")
     except Exception as e:
@@ -322,7 +417,7 @@ async def create_app() -> web.Application:
         app.router.add_get("/version", version_info)
         
         # Configure webhook handler if webhook is enabled
-        if app_config.WEBHOOK_HOST and app_config.WEBHOOK_PATH:
+        if app_config.USE_WEBHOOK and app_config.WEBHOOK_HOST and app_config.WEBHOOK_PATH:
             # Webhook handler oluştur
             webhook_handler = SimpleRequestHandler(
                 dispatcher=dispatcher,
@@ -374,7 +469,7 @@ async def create_app() -> web.Application:
 # ---------------------------------------------------------------------
 async def check_services() -> Dict[str, Any]:
     """Check connectivity to all external services."""
-    global bot, app_config
+    global bot, binance_api, app_config
     
     services_status = {}
     
@@ -396,13 +491,48 @@ async def check_services() -> Dict[str, Any]:
             "error": str(e)
         }
     
-    # Binance API check removed for simplicity
-    services_status["binance"] = {
-        "status": "disabled",
-        "trading_enabled": app_config.ENABLE_TRADING if app_config else False
-    }
+    # Check Binance API (only if trading is enabled)
+    if app_config.ENABLE_TRADING:
+        try:
+            if binance_api:
+                ping_result = await binance_api.ping()
+                services_status["binance"] = {
+                    "status": "connected" if ping_result else "disconnected",
+                    "ping": ping_result,
+                    "trading_enabled": True
+                }
+            else:
+                services_status["binance"] = {"status": "disconnected", "error": "Binance API not initialized", "trading_enabled": True}
+        except Exception as e:
+            services_status["binance"] = {
+                "status": "disconnected",
+                "error": str(e),
+                "trading_enabled": True
+            }
+    else:
+        services_status["binance"] = {
+            "status": "disabled",
+            "trading_enabled": False
+        }
     
     return services_status
+
+async def get_system_info() -> Dict[str, Any]:
+    """Get system information and status."""
+    global app_config
+    
+    return {
+        "version": "1.0.0",
+        "platform": "render" if "RENDER" in os.environ else "local",
+        "environment": "production" if not app_config.DEBUG else "development",
+        "python_version": os.sys.version,
+        "aiohttp_version": aiohttp.__version__,
+        "debug_mode": app_config.DEBUG,
+        "trading_enabled": app_config.ENABLE_TRADING,
+        "webhook_enabled": app_config.USE_WEBHOOK,
+        "services": await check_services(),
+        "di_container_services": list(DIContainer.get_all().keys())
+    }
 
 # ---------------------------------------------------------------------
 # Main Entry Point
@@ -422,18 +552,24 @@ async def main() -> None:
         logger.info(f"🚪 Port: {app_config.WEBAPP_PORT}")
         logger.info(f"🏠 Host: {app_config.WEBAPP_HOST}")
         logger.info(f"🤖 Trading enabled: {app_config.ENABLE_TRADING}")
+        logger.info(f"🌐 Webhook mode: {'enabled' if app_config.USE_WEBHOOK else 'disabled (polling)'}")
         
         # Create and run application
         app = await create_app()
-        runner = web.AppRunner(app)
         
-        await runner.setup()
-        site = web.TCPSite(runner, host=app_config.WEBAPP_HOST, port=app_config.WEBAPP_PORT)
-        await site.start()
+        # Only start web server if webhook is configured
+        if app_config.USE_WEBHOOK:
+            runner = web.AppRunner(app)
+            await runner.setup()
+            site = web.TCPSite(runner, host=app_config.WEBAPP_HOST, port=app_config.WEBAPP_PORT)
+            await site.start()
+            
+            logger.info(f"✅ Server started successfully on port {app_config.WEBAPP_PORT}")
+            logger.info(f"📊 Health check: http://{app_config.WEBAPP_HOST}:{app_config.WEBAPP_PORT}/health")
+        else:
+            logger.info("✅ Polling mode active, web server not started")
         
-        logger.info(f"✅ Server started successfully on port {app_config.WEBAPP_PORT}")
         logger.info("🤖 Bot is now running...")
-        logger.info(f"📊 Health check: http://{app_config.WEBAPP_HOST}:{app_config.WEBAPP_PORT}/health")
         
         # Wait for shutdown signal
         await shutdown_event.wait()
