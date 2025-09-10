@@ -27,7 +27,6 @@ from aiogram.enums import ParseMode
 from aiogram.filters import BaseFilter
 from aiogram.types import ErrorEvent
 
-#from config import BotConfig, get_config, get_telegram_token, get_admins
 from config import get_config, get_telegram_token, get_admins
 
 # ---------------------------------------------------------------------
@@ -47,7 +46,7 @@ logger = logging.getLogger(__name__)
 bot: Optional[Bot] = None
 dispatcher: Optional[Dispatcher] = None
 binance_api = None
-app_config: Optional[BotConfig] = None
+app_config = None
 runner: Optional[web.AppRunner] = None
 
 # Graceful shutdown flag
@@ -193,9 +192,6 @@ async def lifespan():
         DIContainer.register('bot', bot)
         DIContainer.register('dispatcher', dispatcher)
         DIContainer.register('config', app_config)
-        
-        # Binance API initialization removed for simplicity
-        # You can add it back when needed
         
         logger.info("✅ Application components initialized")
         yield
