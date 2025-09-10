@@ -16,13 +16,13 @@ async def load_handlers(dispatcher: Dispatcher) -> dict:
         logger.error(f"❌ Handlers package yüklenemedi: {e}")
         return results
     
-    # Tüm handler modüllerini async olarak yükle
+    # Tüm handler modüllerini senkron olarak import et
     for _, module_name, is_pkg in pkgutil.iter_modules(handlers.__path__):
         if is_pkg:
             continue
         try:
-            # Async import için importlib kullan
-            module = await importlib.import_module(f"handlers.{module_name}")
+            # Senkron import işlemi - await YOK!
+            module = importlib.import_module(f"handlers.{module_name}")
             
             if hasattr(module, "router"):
                 dispatcher.include_router(module.router)
@@ -41,6 +41,7 @@ async def load_handlers(dispatcher: Dispatcher) -> dict:
 
     logger.info(f"📊 Handler yükleme sonucu: {results['loaded']} başarılı, {results['failed']} başarısız")
     return results
+
 
 async def clear_handler_cache():
     """Reload için cache temizleme"""
