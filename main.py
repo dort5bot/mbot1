@@ -27,7 +27,8 @@ from aiogram.enums import ParseMode
 from aiogram.filters import BaseFilter
 from aiogram.types import ErrorEvent
 
-from config import BotConfig, get_config, get_telegram_token, get_admins
+#from config import BotConfig, get_config, get_telegram_token, get_admins
+from config import get_config, get_telegram_token, get_admins
 
 # ---------------------------------------------------------------------
 # Config & Logging Setup
