@@ -88,7 +88,7 @@ class BotConfig:
     ])
     
     ENABLE_TRADING: bool = field(default_factory=lambda: os.getenv("ENABLE_TRADING", "false").lower() == "true")
-    TRADING_STRATEGY: str = field(default_factory=lambda: os.getenv("TRADING_STRategy", "conservative"))
+    TRADING_STRATEGY: str = field(default_factory=lambda: os.getenv("TRADING_STRATEGY", "conservative"))
     MAX_LEVERAGE: int = field(default_factory=lambda: int(os.getenv("MAX_LEVERAGE", "3")))
     
     # Alert settings
@@ -96,9 +96,9 @@ class BotConfig:
     ENABLE_PRICE_ALERTS: bool = field(default_factory=lambda: os.getenv("ENABLE_PRICE_ALERTS", "true").lower() == "true")
     ALERT_COOLDOWN: int = field(default_factory=lambda: int(os.getenv("ALERT_COOLDOWN", "300")))
 
-    # __init__ metodunu tamamen kaldırın - dataclass otomatik oluşturur
+    # __init__ metodunu SİLİN - dataclass otomatik oluşturur
     # def __init__(self):
-    #     """Bu metoda gerek yok, dataclass otomatik oluşturur"""
+    #     pass
 
     @classmethod
     def load(cls) -> "BotConfig":
