@@ -29,6 +29,8 @@ class BotConfig:
     # 🤖 TELEGRAM BOT SETTINGS
     # ========================
     TELEGRAM_TOKEN: str = field(default_factory=lambda: os.getenv("TELEGRAM_TOKEN", ""))
+    NGROK_URL: str = field(default_factory=lambda: os.getenv("NGROK_URL", "https://2fce5af7336f.ngrok-free.app"))
+    
     DEFAULT_LOCALE: str = field(default_factory=lambda: os.getenv("DEFAULT_LOCALE", "en"))
     ADMIN_IDS: List[int] = field(default_factory=lambda: [
         int(x.strip()) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip().isdigit()
@@ -37,7 +39,6 @@ class BotConfig:
     # Webhook settings
     USE_WEBHOOK: bool = field(default_factory=lambda: os.getenv("USE_WEBHOOK", "false").lower() == "true")
     WEBHOOK_HOST: str = field(default_factory=lambda: os.getenv("WEBHOOK_HOST", ""))
-    WEBHOOK_PATH: str = field(default_factory=lambda: os.getenv("WEBHOOK_PATH", ""))
     WEBHOOK_SECRET: str = field(default_factory=lambda: os.getenv("WEBHOOK_SECRET", ""))
     WEBAPP_HOST: str = field(default_factory=lambda: os.getenv("WEBAPP_HOST", "0.0.0.0"))
     WEBAPP_PORT: int = field(default_factory=lambda: int(os.getenv("PORT", "3000")))  # Render PORT variable
@@ -98,8 +99,20 @@ class BotConfig:
     ALERT_COOLDOWN: int = field(default_factory=lambda: int(os.getenv("ALERT_COOLDOWN", "300")))
 
     # ========================
-    # 🛠️ METHODS
+    # 🛠️ METHODS & PROPERTIES
     # ========================
+
+    @property
+    def WEBHOOK_PATH(self) -> str:
+        """Webhook path'i dinamik olarak oluşturur."""
+        if not self.TELEGRAM_TOKEN:
+            return "/webhook/default"
+        return f"/webhook/{self.TELEGRAM_TOKEN.replace(':', '%3A')}"
+
+    @property
+    def WEBHOOK_URL(self) -> str:
+        """Tam webhook URL'ini oluşturur."""
+        return f"{self.NGROK_URL}{self.WEBHOOK_PATH}"
 
     @classmethod
     def load(cls) -> "BotConfig":
@@ -140,10 +153,20 @@ class BotConfig:
     def to_dict(self) -> Dict[str, Any]:
         """Config'i dict olarak döndürür (debug/log amaçlı)."""
         sensitive_fields = {"TELEGRAM_TOKEN", "BINANCE_API_KEY", "BINANCE_API_SECRET", "WEBHOOK_SECRET"}
-        return {
-            k: "***HIDDEN***" if k in sensitive_fields and getattr(self, k) else getattr(self, k)
-            for k in self.__dataclass_fields__
-        }
+        result = {}
+        
+        for field_name in self.__dataclass_fields__:
+            value = getattr(self, field_name)
+            if field_name in sensitive_fields and value:
+                result[field_name] = "***HIDDEN***"
+            else:
+                result[field_name] = value
+        
+        # Property'leri de ekle
+        result["WEBHOOK_PATH"] = self.WEBHOOK_PATH
+        result["WEBHOOK_URL"] = self.WEBHOOK_URL
+        
+        return result
 
 
 async def get_config() -> BotConfig:
@@ -156,6 +179,7 @@ async def get_config() -> BotConfig:
         _CONFIG_INSTANCE = BotConfig.load()
         _CONFIG_INSTANCE.validate()
         logger.info("✅ Bot config yüklendi ve doğrulandı")
+        logger.debug(f"Config: {_CONFIG_INSTANCE.to_dict()}")
     return _CONFIG_INSTANCE
 
 
@@ -172,6 +196,21 @@ def get_admins() -> List[int]:
     if _CONFIG_INSTANCE is None:
         raise RuntimeError("Config henüz yüklenmemiş. Lütfen önce get_config() çağırın.")
     return _CONFIG_INSTANCE.ADMIN_IDS
+
+
+def get_webhook_config() -> Dict[str, Any]:
+    """Webhook konfigürasyonu döndürür."""
+    if _CONFIG_INSTANCE is None:
+        raise RuntimeError("Config henüz yüklenmemiş. Lütfen önce get_config() çağırın.")
+    
+    config = _CONFIG_INSTANCE
+    return {
+        "path": config.WEBHOOK_PATH,
+        "url": config.WEBHOOK_URL,
+        "secret_token": config.WEBHOOK_SECRET,
+        "host": config.WEBAPP_HOST,
+        "port": config.WEBAPP_PORT,
+    }
 
 
 # Redis configuration for Aiogram
