@@ -96,9 +96,11 @@ class BotConfig:
     ENABLE_PRICE_ALERTS: bool = field(default_factory=lambda: os.getenv("ENABLE_PRICE_ALERTS", "true").lower() == "true")
     ALERT_COOLDOWN: int = field(default_factory=lambda: int(os.getenv("ALERT_COOLDOWN", "300")))
 
-    # ========================
-    # 🛠️ METHODS
-    # ========================
+    def __init__(self):
+        """Dataclass için özel __init__ metodu - girinti hatası düzeltildi."""
+        # Bu metod dataclass tarafından otomatik olarak oluşturulur,
+        # ancak explicit olarak tanımlanırsa doğru girinti ile olmalı
+        pass
 
     @classmethod
     def load(cls) -> "BotConfig":
