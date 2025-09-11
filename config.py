@@ -107,7 +107,7 @@ class BotConfig:
         """Webhook path'i dinamik olarak oluşturur."""
         if not self.TELEGRAM_TOKEN:
             return "/webhook/default"
-        return f"/webhook/{self.TELEGRAM_TOKEN.replace(':', '%3A')}"
+        return f"/webhook/{self.TELEGRAM_TOKEN}"
 
     @property
     def WEBHOOK_URL(self) -> str:
@@ -224,4 +224,5 @@ def get_redis_config() -> Dict[str, Any]:
         "host": config.AIOGRAM_REDIS_HOST,
         "port": config.AIOGRAM_REDIS_PORT,
         "db": config.AIOGRAM_REDIS_DB,
+
     }
