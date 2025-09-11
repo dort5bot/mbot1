@@ -1,3 +1,4 @@
+#dar_handler.py
 from __future__ import annotations
 
 import os
@@ -12,7 +13,7 @@ from typing import Dict, List, Optional, Tuple
 
 from dotenv import load_dotenv
 from aiogram import Router
-from aiogram.types import Message
+from aiogram.types import Message, InputFile
 from aiogram.filters import Command
 
 # Load environment
@@ -22,31 +23,42 @@ TELEGRAM_NAME: str = os.getenv("TELEGRAM_NAME", "xbot")
 # Constants
 ROOT_DIR = Path(".").resolve()
 TELEGRAM_MSG_LIMIT = 4000
+MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB limit for uploads
 HANDLERS_DIR = ROOT_DIR / "handlers"
 CACHE_DURATION = 30  # 30 saniye önbellekleme
 
 LOG: logging.Logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO)
 
-# COMMAND INFO
+# COMMAND INFO - Tüm komutlar için kapsamlı açıklamalar
 COMMAND_INFO: Dict[str, str] = {
-    "dar": "/dar: Dosya tree, /dar k: komut listesi, /dar z:repo zip, /dar t: tüm içerik txt",
-    "io": "In-Out Alış Satış Baskısı raporu",
-    "nls": "Balina hareketleri ve yoğunluk (NLS analizi)",
-    "npr": "Nakit Piyasa Raporu",
-    "eft": "wobot2 etf  → yok",
-    "ap": "Altların Güç Endeksi (AP)",
-    "p": "/p liste, /pn :hacimli n coin, /pd n:düşen n coin,/p coin1...: Anlıkfiyat+24hdeğişim+hacim",
-    "p_ekle": "Favori coin listesine coin ekler",
-    "p_fav": "Favori coin listesini gösterir",
-    "p_sil": "Favori coin listesinden coin siler",
-    "fr": "Funding Rate raporu ve günlük CSV kaydı",
-    "whale": "Whale Alerts raporu ve günlük CSV kaydı",
-    "t": "/t →hazir liste, /t n →hacimli n coin, /t coin zaman →coin zaman bilgisi",
-    "etf": "wobot2 etf  → yok",
-    "komut": "tınak_içi_açıklama_ sonrasında VİRGÜL",
+    "dar": "Dosya tree, komut listesi, repo zip, tüm içerik txt",
+    "start": "Botu başlatır ve komut listesini gösterir",
+    "kay": "Kaynak mail adreslerini listeler",
+    "kayek": "Kaynak mail adresi ekler",
+    "kaysil": "Kaynak mail adresi siler",
+    "gr": "Grupları listeler",
+    "grek": "Yeni grup ekler",
+    "grsil": "Grup siler",
+    "checkmail": "Manuel olarak mail kontrolü yapar",
+    "process": "Sadece Excel işleme yapar (mail kontrolü yapmaz)",
+    "cleanup": "Temp klasörünü manuel temizler",
+    "stats": "Bot istatistiklerini gösterir",
+    "proc": "Excel dosyalarını işler",
+    "health": "Bot sağlık durumunu kontrol eder",
+    "ping": "Yanıt süresini test eder",
+    "status": "Detaylı sistem durumunu gösterir",
+    "gruplar": "Tüm grupları listeler",
+    "grupekle": "Yeni grup ekler",
+    "grupsil": "Grup siler",
+    "grupduzenle": "Grup düzenler",
+    "grupyedekle": "Grupları JSON olarak gösterir",
+    "grupsifirla": "Grupları sıfırlar",
+    "gruplari_yenile": "Grupları .env'den yeniden yükler",
+    "grup_ornek": "Grup JSON örneği gösterir",
 }
 
-# # 👇 Tek tip isim: router 1/2
+# Router tanımı
 router = Router(name="dar_handler")
 
 
@@ -107,18 +119,25 @@ class DarService:
 
     async def _scan_handlers(self) -> Dict[str, str]:
         commands: Dict[str, str] = {}
+        # Kapsamlı regex pattern'leri
         patterns = [
-            r'@\w+\.message\(Command\([\'"](\w+)[\'"]\)\)',
-            r'Command\([\'"](\w+)[\'"]\)',
+            r'@router\.message\(Command\(["\'](\w+)["\']\)\)',
+            r'Command\(["\'](\w+)["\']\)',
+            r'@router\.message\(Command\(["\']([\w_]+)["\']\)\)',
+            r'Command\(["\']([\w_]+)["\']\)',
+            r'@\w+\.message\(Command\(["\'](\w+)["\']\)\)',
+            r'@\w+\.message\(Command\(["\']([\w_]+)["\']\)\)',
         ]
 
         if not self.handlers_dir.exists():
             LOG.error("Handlers dizini bulunamadı")
             return commands
 
+        # Tüm handler dosyalarını tarayalım
         for fname in os.listdir(self.handlers_dir):
-            if not fname.endswith("_handler.py"):
+            if not fname.endswith('.py') or fname == '__init__.py':
                 continue
+                
             fpath = self.handlers_dir / fname
             try:
                 content = await asyncio.to_thread(fpath.read_text, encoding="utf-8")
@@ -134,9 +153,24 @@ class DarService:
                 except re.error as e:
                     LOG.warning(f"Regex hatası {pattern}: {e}")
 
+            # Router decorator'larını da kontrol et
+            router_patterns = [
+                r'@router\.message\(Command\(["\'](\w+)["\']\)\)',
+                r'@\w+\.message\(Command\(["\'](\w+)["\']\)\)',
+            ]
+            
+            for pattern in router_patterns:
+                try:
+                    matches = re.findall(pattern, content, flags=re.IGNORECASE)
+                    found_commands.update(matches)
+                except re.error as e:
+                    LOG.warning(f"Router regex hatası {pattern}: {e}")
+
             for cmd in found_commands:
-                desc = COMMAND_INFO.get(cmd.lower(), "(açıklama yok)")
-                commands[f"/{cmd}"] = f"{desc} ({fname})"
+                # Sadece geçerli komutları ekle (boş string olmayan)
+                if cmd and cmd.strip():
+                    desc = COMMAND_INFO.get(cmd.lower(), "(açıklama yok)")
+                    commands[f"/{cmd}"] = f"{desc} ({fname})"
 
         LOG.info(f"{len(commands)} komut bulundu")
         return commands
@@ -149,8 +183,8 @@ class DarService:
             for fpath in valid_files:
                 try:
                     zipf.write(fpath, fpath.relative_to(self.root_dir))
-                except Exception:
-                    continue
+                except Exception as e:
+                    LOG.warning(f"Zip eklenemedi {fpath}: {e}")
             for extra in [".env", ".gitignore"]:
                 extra_path = self.root_dir / extra
                 if extra_path.exists():
@@ -164,7 +198,8 @@ class DarService:
             for fpath in valid_files:
                 try:
                     content = fpath.read_text(encoding="utf-8")
-                except Exception:
+                except Exception as e:
+                    LOG.warning(f"{fpath} okunamadı: {e}")
                     continue
                 f.write(f"\n\n{'='*50}\n{fpath}\n{'='*50}\n\n")
                 f.write(content)
@@ -190,6 +225,7 @@ async def handle_dar_command(message: Message) -> None:
     try:
         tree_text, valid_files = service.format_tree()
 
+        # /dar k - komut listesi
         if mode == "k":
             scanned = await service.scan_handlers_for_commands(force_refresh=force_refresh)
             if not scanned:
@@ -201,24 +237,44 @@ async def handle_dar_command(message: Message) -> None:
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                 txt_filename = Path(f"{TELEGRAM_NAME}_commands_{timestamp}.txt")
                 txt_filename.write_text(text, encoding="utf-8")
-                await message.answer_document(document=txt_filename.open("rb"), filename=txt_filename.name)
-                txt_filename.unlink(missing_ok=True)
+                try:
+                    input_file = InputFile(txt_filename, filename=txt_filename.name)
+                    await message.answer_document(document=input_file)
+                finally:
+                    txt_filename.unlink(missing_ok=True)
             else:
                 await message.answer(f"<pre>{text}</pre>", parse_mode="HTML")
             return
 
+        # /dar z - zip gönder
         if mode == "z":
             zip_path = service.create_zip(tree_text, valid_files)
-            await message.answer_document(document=zip_path.open("rb"), filename=zip_path.name)
-            zip_path.unlink(missing_ok=True)
+            if zip_path.stat().st_size > MAX_FILE_SIZE:
+                await message.answer("⚠️ Zip dosyası çok büyük, gönderilemiyor.")
+                zip_path.unlink(missing_ok=True)
+                return
+            try:
+                input_file = InputFile(zip_path, filename=zip_path.name)
+                await message.answer_document(document=input_file)
+            finally:
+                zip_path.unlink(missing_ok=True)
             return
 
+        # /dar t - tüm dosyaları txt gönder
         if mode == "t":
             txt_path = service.create_all_txt(valid_files)
-            await message.answer_document(document=txt_path.open("rb"), filename=txt_path.name)
-            txt_path.unlink(missing_ok=True)
+            if txt_path.stat().st_size > MAX_FILE_SIZE:
+                await message.answer("⚠️ Dosya çok büyük, gönderilemiyor.")
+                txt_path.unlink(missing_ok=True)
+                return
+            try:
+                input_file = InputFile(txt_path, filename=txt_path.name)
+                await message.answer_document(document=input_file)
+            finally:
+                txt_path.unlink(missing_ok=True)
             return
 
+        # /dar f - cache temizle
         if mode == "f":
             await service.clear_cache()
             await message.answer("✅ Önbellek temizlendi. Tekrar deneyin.")
@@ -229,11 +285,20 @@ async def handle_dar_command(message: Message) -> None:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             txt_filename = Path(f"{TELEGRAM_NAME}_tree_{timestamp}.txt")
             txt_filename.write_text(tree_text, encoding="utf-8")
-            await message.answer_document(document=txt_filename.open("rb"), filename=txt_filename.name)
-            txt_filename.unlink(missing_ok=True)
+            try:
+                input_file = InputFile(txt_filename, filename=txt_filename.name)
+                await message.answer_document(document=input_file)
+            finally:
+                txt_filename.unlink(missing_ok=True)
         else:
             await message.answer(f"<pre>{tree_text}</pre>", parse_mode="HTML")
 
     except Exception as e:
         LOG.error(f"Dar komutu işlenirken hata: {e}")
         await message.answer(f"❌ Hata: {str(e)}")
+
+
+# Handler loader compatibility
+async def register_handlers(router_instance: Router):
+    """Register handlers with the router - required for handler_loader"""
+    router_instance.include_router(router)
