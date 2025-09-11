@@ -224,5 +224,16 @@ async def dar_command(message: Message) -> None:
             await message.answer("✅ Önbellek temizlendi. Tekrar deneyin.")
             return
 
+        # Varsayılan: sadece tree göster
         if len(tree_text) > TELEGRAM_MSG_LIMIT:
-            timestamp = datetime.now().strftime("%Y%m%d_%H
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            txt_filename = Path(f"{TELEGRAM_NAME}_tree_{timestamp}.txt")
+            txt_filename.write_text(tree_text, encoding="utf-8")
+            await message.answer_document(document=txt_filename.open("rb"), filename=txt_filename.name)
+            txt_filename.unlink(missing_ok=True)
+        else:
+            await message.answer(f"<pre>{tree_text}</pre>", parse_mode="HTML")
+
+    except Exception as e:
+        LOG.error(f"Dar komutu işlenirken hata: {e}")
+        await message.answer(f"❌ Hata: {str(e)}")
