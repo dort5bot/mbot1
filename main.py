@@ -56,7 +56,7 @@ from utils.binance.binance_request import BinanceHTTPClient
 from utils.binance.binance_circuit_breaker import CircuitBreaker
 from config import BotConfig, get_config, get_telegram_token, get_admins
 
-#from handlers import dar_handler
+from handlers import dar_handler
 
 
     
@@ -599,3 +599,4 @@ if __name__ == "__main__":
         logger.critical(f"💥 Fatal error: {e}")
 
         exit(1)
+
