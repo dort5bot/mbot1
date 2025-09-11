@@ -8,28 +8,7 @@ Aiogram 3.x + Router pattern + Webhook + Render uyumlu.
 - Graceful shutdown
 - Local polling desteği eklendi
 free tier platformlarla tam uyumludur.
-+
-
-🎯 Yapılan İyileştirmeler:
-1. Polling modu desteği eklendi:
-start_polling() fonksiyonu eklendi
-polling_task global değişkeni eklendi
-Lifespan içinde polling kontrolü yapılıyor
-2. Akıllı mod seçimi:
-USE_WEBHOOK false ise otomatik polling başlatılıyor
-USE_WEBHOOK true ise webhook modu kullanılıyor
-3. Graceful shutdown geliştirmeleri:
-Polling task'ı düzgün şekilde iptal ediliyor
-Web server sadece webhook modunda başlatılıyor
-4. Logging iyileştirmeleri:
-Hangi modun aktif olduğu loglanıyor
-Platform bilgileri daha detaylı
-Bu güncellemelerle:
-Render/Railway'de webhook modu çalışacak
-Local/PC/Ngrok'ta otomatik polling moduna geçecek
-Hiçbir mevcut özellik bozulmadı
-Tüm hata kontrolleri korundu
-
++ (Webhook path now uses /webhook/<BOT_TOKEN> format)
 """
 
 import os
@@ -56,10 +35,6 @@ from utils.binance.binance_request import BinanceHTTPClient
 from utils.binance.binance_circuit_breaker import CircuitBreaker
 from config import BotConfig, get_config, get_telegram_token, get_admins
 
-#from handlers import dar_handler
-
-
-    
 # ---------------------------------------------------------------------
 # Config & Logging Setup
 # ---------------------------------------------------------------------
@@ -90,7 +65,13 @@ shutdown_event = asyncio.Event()
 def handle_shutdown(signum, frame) -> None:
     """Handle shutdown signals gracefully."""
     logger.info(f"🛑 Received signal {signum}, initiating graceful shutdown...")
-    shutdown_event.set()
+    # set the asyncio event in an async-safe way
+    try:
+        loop = asyncio.get_event_loop()
+        loop.call_soon_threadsafe(shutdown_event.set)
+    except Exception:
+        # If loop closed or unavailable, set directly (best-effort)
+        shutdown_event.set()
 
 # Register signal handlers
 signal.signal(signal.SIGTERM, handle_shutdown)
@@ -104,7 +85,7 @@ async def error_handler(event: ErrorEvent) -> None:
     logger.error(f"❌ Error handling update: {event.exception}")
     
     try:
-        if event.update.message:
+        if getattr(event.update, "message", None):
             await event.update.message.answer("❌ Bir hata oluştu, lütfen daha sonra tekrar deneyin.")
     except Exception as e:
         logger.error(f"❌ Failed to send error message: {e}")
@@ -134,16 +115,16 @@ class LoggingMiddleware:
     
     async def __call__(self, handler, event, data):
         # Pre-processing
-        logger.info(f"📨 Update received: {event.update_id}")
+        logger.info(f"📨 Update received: {getattr(event, 'update_id', 'unknown')}")
         start_time = asyncio.get_event_loop().time()
         
         try:
             result = await handler(event, data)
             processing_time = asyncio.get_event_loop().time() - start_time
-            logger.info(f"✅ Update processed: {event.update_id} in {processing_time:.2f}s")
+            logger.info(f"✅ Update processed: {getattr(event, 'update_id', 'unknown')} in {processing_time:.2f}s")
             return result
         except Exception as e:
-            logger.error(f"❌ Error processing update {event.update_id}: {e}")
+            logger.error(f"❌ Error processing update {getattr(event, 'update_id', 'unknown')}: {e}")
             raise
 
 class AuthenticationMiddleware:
@@ -152,14 +133,12 @@ class AuthenticationMiddleware:
     async def __call__(self, handler, event, data):
         global app_config
         
-        # Check if it's a message from a user
-        if hasattr(event, 'from_user') and event.from_user:
-            user_id = event.from_user.id
-            
-            # Add user info to data for handlers
+        # Some events may not have from_user (like callback query wrappers), guard accordingly
+        user = getattr(event, "from_user", None)
+        if user:
+            user_id = user.id
             data['user_id'] = user_id
             data['is_admin'] = app_config.is_admin(user_id) if app_config else False
-            
             logger.debug(f"👤 User {user_id} - Admin: {data['is_admin']}")
         
         return await handler(event, data)
@@ -201,6 +180,7 @@ async def start_polling() -> None:
     
     try:
         logger.info("🔄 Starting polling mode for local development...")
+        # start_polling will run until cancelled
         await dispatcher.start_polling(bot)
     except asyncio.CancelledError:
         logger.info("⏹️ Polling task cancelled")
@@ -224,7 +204,6 @@ async def lifespan():
             token=get_telegram_token(),
             default=DefaultBotProperties(
                 parse_mode=ParseMode.HTML,
-                #timeout=app_config.REQUEST_TIMEOUT     #pc için iptal
             )
         )
         
@@ -232,7 +211,6 @@ async def lifespan():
         main_router = Router()
         dispatcher = Dispatcher()
         dispatcher.include_router(main_router)
-        #dispatcher.include_router(dar_handler.router)   #dar_handler.py örnek:
         dispatcher.errors.register(error_handler)
         
         # Register middleware
@@ -321,7 +299,8 @@ async def health_check(request: web.Request) -> web.Response:
             "status": "healthy",
             "service": "mbot1-telegram-bot",
             "platform": "render" if "RENDER" in os.environ else ("railway" if "RAILWAY" in os.environ else "local"),
-            "timestamp": asyncio.get_event_loop().time()
+            "timestamp": asyncio.get_event_loop().time(),
+            "services": services_status
         })
     except Exception as e:
         return web.json_response({
@@ -368,27 +347,43 @@ async def on_startup(bot: Bot) -> None:
         await clear_handler_cache()
         load_results = await load_handlers(dispatcher)
         
-        if load_results["failed"] > 0:
+        if load_results.get("failed", 0) > 0:
             logger.warning(f"⚠️ {load_results['failed']} handlers failed to load")
         
         # Set webhook if webhook is configured
-        if app_config.USE_WEBHOOK and app_config.WEBHOOK_HOST and app_config.WEBHOOK_PATH:
-            webhook_url = f"{app_config.WEBHOOK_HOST}{app_config.WEBHOOK_PATH}/{get_telegram_token()}"
+        # New behavior: always set webhook to <WEBHOOK_HOST>/webhook/<BOT_TOKEN>
+        if app_config.USE_WEBHOOK and app_config.WEBHOOK_HOST:
+            # Ensure WEBHOOK_HOST doesn't end with slash
+            host = app_config.WEBHOOK_HOST.rstrip("/")
+            token = get_telegram_token()
+            webhook_url = f"{host}/webhook/{token}"
             await bot.delete_webhook(drop_pending_updates=True)
-            await bot.set_webhook(webhook_url, secret_token=app_config.WEBHOOK_SECRET)
+            
+            # set secret_token if provided in config, else None
+            secret = getattr(app_config, "WEBHOOK_SECRET", None) or None
+            if secret:
+                await bot.set_webhook(webhook_url, secret_token=secret)
+            else:
+                await bot.set_webhook(webhook_url)
+            
             logger.info(f"✅ Webhook set successfully: {webhook_url}")
         else:
             logger.info("ℹ️ Webhook not configured, using polling mode")
         
-        logger.info(f"🌐 Health check: http://{app_config.WEBAPP_HOST}:{app_config.WEBAPP_PORT}/health")
-
+        # Log health check URL (use configured host/port if available)
+        try:
+            host = app_config.WEBAPP_HOST
+            port = app_config.WEBAPP_PORT
+            logger.info(f"🌐 Health check: http://{host}:{port}/health")
+        except Exception:
+            logger.info("🌐 Health check endpoint available at /health")
+        
         # 🔔 Adminlere "Bot başlatıldı" mesajı gönder
         for admin_id in get_admins():
             try:
                 await bot.send_message(admin_id, "🤖 Bot başlatıldı ve çalışıyor!")
             except Exception as e:
                 logger.warning(f"⚠️ Admin {admin_id} mesaj gönderilemedi: {e}")
-
     
     except Exception as e:
         logger.error(f"❌ Startup failed: {e}")
@@ -400,11 +395,14 @@ async def on_shutdown(bot: Bot) -> None:
     
     try:
         # Delete webhook if it was set
-        if app_config.USE_WEBHOOK and app_config.WEBHOOK_HOST and app_config.WEBHOOK_PATH:
-            await bot.delete_webhook()
-            logger.info("✅ Webhook deleted")
+        if app_config and app_config.USE_WEBHOOK and getattr(app_config, "WEBHOOK_HOST", None):
+            try:
+                await bot.delete_webhook()
+                logger.info("✅ Webhook deleted")
+            except Exception as e:
+                logger.warning(f"⚠️ Failed to delete webhook: {e}")
     except Exception as e:
-        logger.warning(f"⚠️ Failed to delete webhook: {e}")
+        logger.warning(f"⚠️ on_shutdown encountered an error: {e}")
 
 # ---------------------------------------------------------------------
 # Main Application Factory
@@ -413,7 +411,7 @@ async def create_app() -> web.Application:
     """Create and configure aiohttp web application."""
     global bot, dispatcher, app_config
     
-    # Initialize components
+    # Initialize components inside lifespan context
     async with lifespan():
         # Create aiohttp app
         app = web.Application()
@@ -424,22 +422,22 @@ async def create_app() -> web.Application:
         app.router.add_get("/ready", readiness_check)
         app.router.add_get("/version", version_info)
         
-        # Configure webhook handler if webhook is enabled
-        if app_config.USE_WEBHOOK and app_config.WEBHOOK_HOST and app_config.WEBHOOK_PATH:
-            # Webhook handler oluştur
+        # Configure webhook handler using path /webhook/{token}
+        # This ensures the server endpoint matches the Telegram-set URL: https://your-host/webhook/<BOT_TOKEN>
+        if app_config.USE_WEBHOOK and app_config.WEBHOOK_HOST:
             webhook_handler = SimpleRequestHandler(
                 dispatcher=dispatcher,
                 bot=bot,
-                secret_token=app_config.WEBHOOK_SECRET
+                secret_token=getattr(app_config, "WEBHOOK_SECRET", None) or None
             )
             
-            # Webhook endpoint route'u
-            webhook_route = f"{app_config.WEBHOOK_PATH}/{{token}}"
+            # Always use /webhook/{token} pattern (no extra prefix)
+            webhook_route = "/webhook/{token}"
             
-            # POST endpoint'i (Telegram webhook'ları için)
+            # POST endpoint for Telegram updates
             app.router.add_post(webhook_route, webhook_handler)
             
-            # GET endpoint'i (test ve bilgilendirme için)
+            # GET endpoint for basic info/test (verifies token)
             async def webhook_info(request: web.Request):
                 token = request.match_info.get('token', '')
                 valid_token = get_telegram_token()
@@ -458,14 +456,14 @@ async def create_app() -> web.Application:
                     }, status=400)
             
             app.router.add_get(webhook_route, webhook_info)
-            
-            logger.info(f"📨 Webhook endpoint configured: {webhook_route}")
+            logger.info(f"📨 Webhook endpoint configured: {webhook_route} (expects /webhook/<BOT_TOKEN>)")
         
         # Setup startup/shutdown hooks
+        # Use lambdas that call our async functions with bot instance
         app.on_startup.append(lambda app: on_startup(bot))
         app.on_shutdown.append(lambda app: on_shutdown(bot))
         
-        # Setup aiogram application
+        # Setup aiogram application (registers internal routes/handlers)
         setup_application(app, dispatcher, bot=bot)
         
         logger.info(f"🚀 Application configured on port {app_config.WEBAPP_PORT}")
@@ -605,8 +603,4 @@ if __name__ == "__main__":
         logger.info("👋 Application terminated by user")
     except Exception as e:
         logger.critical(f"💥 Fatal error: {e}")
-
         exit(1)
-
-
-
