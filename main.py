@@ -56,7 +56,7 @@ from utils.binance.binance_request import BinanceHTTPClient
 from utils.binance.binance_circuit_breaker import CircuitBreaker
 from config import BotConfig, get_config, get_telegram_token, get_admins
 
-from handlers import dar_handler
+#from handlers import dar_handler
 
 
     
@@ -232,7 +232,7 @@ async def lifespan():
         main_router = Router()
         dispatcher = Dispatcher()
         dispatcher.include_router(main_router)
-        dispatcher.include_router(dar_handler.router)   #dar_handler.py örnek:
+        #dispatcher.include_router(dar_handler.router)   #dar_handler.py örnek:
         dispatcher.errors.register(error_handler)
         
         # Register middleware
@@ -599,4 +599,5 @@ if __name__ == "__main__":
         logger.critical(f"💥 Fatal error: {e}")
 
         exit(1)
+
 
