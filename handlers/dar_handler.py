@@ -46,8 +46,8 @@ COMMAND_INFO: Dict[str, str] = {
     "komut": "tınak_içi_açıklama_ sonrasında VİRGÜL",
 }
 
-# Router oluştur
-dar_router = Router(name="dar_router")
+# # 👇 Tek tip isim: router 1/2
+router = Router(name="dar_handler")
 
 
 class DarService:
@@ -180,8 +180,8 @@ def get_dar_service() -> DarService:
     return DarService()
 
 
-@dar_router.message(Command("dar"))
-async def dar_command(message: Message) -> None:
+@router.message(Command("dar"))
+async def handle_dar_command(message: Message) -> None:
     service = get_dar_service()
     args = message.text.split()[1:] if message.text else []
     mode = args[0].lower() if args else ""
