@@ -381,7 +381,15 @@ async def on_startup(bot: Bot) -> None:
             logger.info("ℹ️ Webhook not configured, using polling mode")
         
         logger.info(f"🌐 Health check: http://{app_config.WEBAPP_HOST}:{app_config.WEBAPP_PORT}/health")
-        
+
+        # 🔔 Adminlere "Bot başlatıldı" mesajı gönder
+        for admin_id in get_admins():
+            try:
+                await bot.send_message(admin_id, "🤖 Bot başlatıldı ve çalışıyor!")
+            except Exception as e:
+                logger.warning(f"⚠️ Admin {admin_id} mesaj gönderilemedi: {e}")
+
+    
     except Exception as e:
         logger.error(f"❌ Startup failed: {e}")
         raise
@@ -599,5 +607,6 @@ if __name__ == "__main__":
         logger.critical(f"💥 Fatal error: {e}")
 
         exit(1)
+
 
 
