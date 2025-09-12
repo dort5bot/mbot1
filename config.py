@@ -222,7 +222,4 @@ def get_redis_config() -> Dict[str, Any]:
         "host": config.AIOGRAM_REDIS_HOST,
         "port": config.AIOGRAM_REDIS_PORT,
         "db": config.AIOGRAM_REDIS_DB,
-
     }
-
-
