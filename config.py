@@ -101,14 +101,12 @@ class BotConfig:
     # ========================
     # 🛠️ METHODS & PROPERTIES
     # ========================
-
-   @property
+    @property
     def WEBHOOK_PATH(self) -> str:
         """Webhook path'i dinamik olarak oluşturur (Telegram formatına uygun)."""
         if not self.TELEGRAM_TOKEN:
             return "/webhook/default"
         return f"/webhook/{self.TELEGRAM_TOKEN}"
-
 
     @property
     def WEBHOOK_URL(self) -> str:
@@ -226,4 +224,5 @@ def get_redis_config() -> Dict[str, Any]:
         "db": config.AIOGRAM_REDIS_DB,
 
     }
+
 
