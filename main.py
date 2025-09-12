@@ -167,25 +167,6 @@ class DIContainer:
         """Get all registered instances."""
         return cls._instances.copy()
 
-# ... (önceki importlar ve yapılandırma aynı)
-
-# ---------------------------------------------------------------------
-# Handler yükleme sonrasında yönlendiricileri kontrol et
-# ---------------------------------------------------------------------
-def log_routers(dispatcher: Dispatcher):
-    """Log all registered routers and handlers."""
-    logger.info("📋 Registered routers and handlers:")
-    
-    # dispatcher doğrudan kendisi router koleksiyonunu içerir
-    for i, router in enumerate(dispatcher._routers):
-        logger.info(f"  {i+1}. {router.__class__.__name__}")
-        
-        # Handler'ları logla
-        for j, handler in enumerate(router.handlers):
-            handler_name = handler.callback.__name__ if hasattr(handler.callback, '__name__') else 'unknown'
-            logger.info(f"    └ Handler {j+1}: {handler_name}")
-            logger.info(f"      Filters: {[f.__class__.__name__ for f in handler.filters]}")
-
 # ---------------------------------------------------------------------
 # Polling Setup for Local Development
 # ---------------------------------------------------------------------
@@ -226,8 +207,10 @@ async def lifespan():
             )
         )
         
-        # Initialize dispatcher
+        # Initialize dispatcher with main router and error handler
+        main_router = Router()
         dispatcher = Dispatcher()
+        dispatcher.include_router(main_router)
         dispatcher.errors.register(error_handler)
         
         # Register middleware
@@ -250,8 +233,8 @@ async def lifespan():
             )
             
             circuit_breaker = CircuitBreaker(
-                failure_threshold=3,
-                recovery_timeout=60,
+                failure_threshold=3,  # Default value
+                recovery_timeout=60,  # Default value
                 half_open_attempts=2
             )
             
@@ -261,17 +244,6 @@ async def lifespan():
         else:
             binance_api = None
             logger.info("ℹ️ Binance API not initialized (trading disabled)")
-        
-        # Handler'ları yükle
-        await clear_handler_cache()
-        load_results = await load_handlers(dispatcher)
-        logger.info(f"✅ Handlers loaded: {load_results}")
-        
-        # Router debug log
-        log_routers(dispatcher)
-        
-        if load_results.get("failed", 0) > 0:
-            logger.warning(f"⚠️ {load_results['failed']} handlers failed to load")
         
         # Start polling if webhook is not configured (local development)
         if not app_config.USE_WEBHOOK:
@@ -316,6 +288,54 @@ async def lifespan():
         logger.info("🛑 Application resources cleaned up")
 
 # ---------------------------------------------------------------------
+# Health Check Endpoints
+# ---------------------------------------------------------------------
+async def health_check(request: web.Request) -> web.Response:
+    """Health check endpoint for Render and monitoring."""
+    try:
+        services_status = await check_services()
+        
+        return web.json_response({
+            "status": "healthy",
+            "service": "mbot1-telegram-bot",
+            "platform": "render" if "RENDER" in os.environ else ("railway" if "RAILWAY" in os.environ else "local"),
+            "timestamp": asyncio.get_event_loop().time(),
+            "services": services_status
+        })
+    except Exception as e:
+        return web.json_response({
+            "status": "unhealthy",
+            "error": str(e)
+        }, status=500)
+
+async def readiness_check(request: web.Request) -> web.Response:
+    """Readiness check for Kubernetes and load balancers."""
+    global bot, binance_api, app_config
+    
+    if bot and app_config:
+        # Binance API is only required if trading is enabled
+        if app_config.ENABLE_TRADING and not binance_api:
+            return web.json_response({"status": "not_ready"}, status=503)
+        
+        # Check DI container health
+        essential_services = ['bot', 'dispatcher', 'config']
+        missing_services = [svc for svc in essential_services if not DIContainer.resolve(svc)]
+        
+        if missing_services:
+            return web.json_response({
+                "status": "not_ready",
+                "missing_services": missing_services
+            }, status=503)
+            
+        return web.json_response({"status": "ready"})
+    else:
+        return web.json_response({"status": "not_ready"}, status=503)
+
+async def version_info(request: web.Request) -> web.Response:
+    """Version and system information endpoint."""
+    return web.json_response(await get_system_info())
+
+# ---------------------------------------------------------------------
 # Webhook Setup Functions
 # ---------------------------------------------------------------------
 async def on_startup(bot: Bot) -> None:
@@ -323,7 +343,15 @@ async def on_startup(bot: Bot) -> None:
     global app_config
     
     try:
+        # Clear handler cache and load handlers
+        await clear_handler_cache()
+        load_results = await load_handlers(dispatcher)
+        
+        if load_results.get("failed", 0) > 0:
+            logger.warning(f"⚠️ {load_results['failed']} handlers failed to load")
+        
         # Set webhook if webhook is configured
+        # New behavior: always set webhook to <WEBHOOK_HOST>/webhook/<BOT_TOKEN>
         if app_config.USE_WEBHOOK and app_config.WEBHOOK_HOST:
             # Ensure WEBHOOK_HOST doesn't end with slash
             host = app_config.WEBHOOK_HOST.rstrip("/")
@@ -342,7 +370,7 @@ async def on_startup(bot: Bot) -> None:
         else:
             logger.info("ℹ️ Webhook not configured, using polling mode")
         
-        # Log health check URL
+        # Log health check URL (use configured host/port if available)
         try:
             host = app_config.WEBAPP_HOST
             port = app_config.WEBAPP_PORT
@@ -361,7 +389,156 @@ async def on_startup(bot: Bot) -> None:
         logger.error(f"❌ Startup failed: {e}")
         raise
 
-# ... (diğer fonksiyonlar aynı kalacak)
+async def on_shutdown(bot: Bot) -> None:
+    """Execute on application shutdown."""
+    logger.info("🛑 Shutting down application...")
+    
+    try:
+        # Delete webhook if it was set
+        if app_config and app_config.USE_WEBHOOK and getattr(app_config, "WEBHOOK_HOST", None):
+            try:
+                await bot.delete_webhook()
+                logger.info("✅ Webhook deleted")
+            except Exception as e:
+                logger.warning(f"⚠️ Failed to delete webhook: {e}")
+    except Exception as e:
+        logger.warning(f"⚠️ on_shutdown encountered an error: {e}")
+
+# ---------------------------------------------------------------------
+# Main Application Factory
+# ---------------------------------------------------------------------
+async def create_app() -> web.Application:
+    """Create and configure aiohttp web application."""
+    global bot, dispatcher, app_config
+    
+    # Initialize components inside lifespan context
+    async with lifespan():
+        # Create aiohttp app
+        app = web.Application()
+        
+        # Register routes
+        app.router.add_get("/", health_check)
+        app.router.add_get("/health", health_check)
+        app.router.add_get("/ready", readiness_check)
+        app.router.add_get("/version", version_info)
+        
+        # Configure webhook handler using path /webhook/{token}
+        # This ensures the server endpoint matches the Telegram-set URL: https://your-host/webhook/<BOT_TOKEN>
+        if app_config.USE_WEBHOOK and app_config.WEBHOOK_HOST:
+            webhook_handler = SimpleRequestHandler(
+                dispatcher=dispatcher,
+                bot=bot,
+                secret_token=getattr(app_config, "WEBHOOK_SECRET", None) or None
+            )
+            
+            # Always use /webhook/{token} pattern (no extra prefix)
+            webhook_route = "/webhook/{token}"
+            
+            # POST endpoint for Telegram updates
+            app.router.add_post(webhook_route, webhook_handler)
+            
+            # GET endpoint for basic info/test (verifies token)
+            async def webhook_info(request: web.Request):
+                token = request.match_info.get('token', '')
+                valid_token = get_telegram_token()
+                
+                if token == valid_token:
+                    return web.json_response({
+                        "status": "active",
+                        "bot_token": f"{token[:10]}...{token[-6:]}",
+                        "method": "POST",
+                        "message": "Webhook is active. Use POST method for Telegram updates."
+                    })
+                else:
+                    return web.json_response({
+                        "status": "invalid_token",
+                        "message": "The provided token is invalid."
+                    }, status=400)
+            
+            app.router.add_get(webhook_route, webhook_info)
+            logger.info(f"📨 Webhook endpoint configured: {webhook_route} (expects /webhook/<BOT_TOKEN>)")
+        
+        # Setup startup/shutdown hooks
+        # Use lambdas that call our async functions with bot instance
+        app.on_startup.append(lambda app: on_startup(bot))
+        app.on_shutdown.append(lambda app: on_shutdown(bot))
+        
+        # Setup aiogram application (registers internal routes/handlers)
+        setup_application(app, dispatcher, bot=bot)
+        
+        logger.info(f"🚀 Application configured on port {app_config.WEBAPP_PORT}")
+        
+        return app
+
+# ---------------------------------------------------------------------
+# Utility Functions
+# ---------------------------------------------------------------------
+async def check_services() -> Dict[str, Any]:
+    """Check connectivity to all external services."""
+    global bot, binance_api, app_config
+    
+    services_status = {}
+    
+    # Check Telegram API
+    try:
+        if bot:
+            me = await bot.get_me()
+            services_status["telegram"] = {
+                "status": "connected",
+                "bot_username": me.username,
+                "bot_id": me.id,
+                "first_name": me.first_name
+            }
+        else:
+            services_status["telegram"] = {"status": "disconnected", "error": "Bot not initialized"}
+    except Exception as e:
+        services_status["telegram"] = {
+            "status": "disconnected",
+            "error": str(e)
+        }
+    
+    # Check Binance API (only if trading is enabled)
+    if app_config.ENABLE_TRADING:
+        try:
+            if binance_api:
+                ping_result = await binance_api.ping()
+                services_status["binance"] = {
+                    "status": "connected" if ping_result else "disconnected",
+                    "ping": ping_result,
+                    "trading_enabled": True
+                }
+            else:
+                services_status["binance"] = {"status": "disconnected", "error": "Binance API not initialized", "trading_enabled": True}
+        except Exception as e:
+            services_status["binance"] = {
+                "status": "disconnected",
+                "error": str(e),
+                "trading_enabled": True
+            }
+    else:
+        services_status["binance"] = {
+            "status": "disabled",
+            "trading_enabled": False
+        }
+    
+    return services_status
+
+async def get_system_info() -> Dict[str, Any]:
+    """Get system information and status."""
+    global app_config
+    
+    return {
+        "version": "1.0.0",
+        "platform": "render" if "RENDER" in os.environ else "local",
+        "environment": "production" if not app_config.DEBUG else "development",
+        "python_version": os.sys.version,
+        "aiohttp_version": aiohttp.__version__,
+        "debug_mode": app_config.DEBUG,
+        "trading_enabled": app_config.ENABLE_TRADING,
+        "webhook_enabled": app_config.USE_WEBHOOK,
+        "services": await check_services(),
+        "di_container_services": list(DIContainer.get_all().keys())
+    }
 
 # ---------------------------------------------------------------------
 # Main Entry Point
