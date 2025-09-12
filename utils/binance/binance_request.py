@@ -44,13 +44,23 @@ class BinanceHTTPClient:
         self.api_key = api_key
         self.secret_key = secret_key
         self.config = {**DEFAULT_CONFIG, **(config or {})}
-        self._session = session
+        self._session = session or aiohttp.ClientSession(   # ✅ buraya eklendi
+            timeout=aiohttp.ClientTimeout(total=(config or DEFAULT_CONFIG)["timeout"]),
+            connector=aiohttp.TCPConnector(limit=100, limit_per_host=20)
+        )
         self._last_request_time = 0
         self._min_request_interval = 1.0 / 10  # 10 requests per second default
         self._weight_used = 0
         self._weight_reset_time = time.time() + 60  # Reset in 1 minute
         
         logger.info("✅ BinanceHTTPClient initialized")
+    
+    async def close(self) -> None:
+        """Close HTTP session."""
+        if self._session and not self._session.closed:
+            await self._session.close()
+            logger.info("✅ BinanceHTTPClient session closed")
+
     
     async def _get_session(self) -> aiohttp.ClientSession:
         """Get or create aiohttp session."""
