@@ -294,12 +294,19 @@ async def health_check(request: web.Request) -> web.Response:
     """Health check endpoint for Render and monitoring."""
     try:
         services_status = await check_services()
+
+         # Handler durumunu da kontrol et
+        handler_status = {
+            "total_handlers": len(dispatcher.sub_routers) if dispatcher else 0,
+            "handlers_loaded": True if dispatcher and dispatcher.sub_routers else False
+        }
         
         return web.json_response({
             "status": "healthy",
             "service": "mbot1-telegram-bot",
             "platform": "render" if "RENDER" in os.environ else ("railway" if "RAILWAY" in os.environ else "local"),
             "timestamp": asyncio.get_event_loop().time(),
+            "handlers": handler_status,
             "services": services_status
         })
     except Exception as e:
@@ -609,4 +616,5 @@ if __name__ == "__main__":
     except Exception as e:
         logger.critical(f"💥 Fatal error: {e}")
         exit(1)
+
 
