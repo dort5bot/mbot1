@@ -2,6 +2,7 @@
 import importlib
 import pkgutil
 import logging
+import sys
 from pathlib import Path
 from aiogram import Dispatcher
 
@@ -43,3 +44,20 @@ async def load_handlers(dispatcher: Dispatcher) -> dict:
 
     logger.info(f"📊 Handler yükleme sonucu: {results['loaded']} başarılı, {results['failed']} başarısız")
     return results
+
+
+#clear_handler_cache fonksiyonu
+async def clear_handler_cache():
+    """Reload için cache temizleme"""
+    modules_to_remove = []
+    
+    for key in list(sys.modules.keys()):
+        if key.startswith("handlers."):
+            modules_to_remove.append(key)
+    
+    for module_name in modules_to_remove:
+        try:
+            del sys.modules[module_name]
+            logger.debug(f"🧹 Cache temizlendi: {module_name}")
+        except Exception as e:
+            logger.warning(f"⚠️ Cache temizlenemedi {module_name}: {e}")
