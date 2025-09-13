@@ -338,17 +338,22 @@ async def version_info(request: web.Request) -> web.Response:
 # ---------------------------------------------------------------------
 # Webhook Setup Functions
 # ---------------------------------------------------------------------
+# main.py'de on_startup fonksiyonunu güncelleyin
 async def on_startup(bot: Bot) -> None:
     """Execute on application startup."""
-    global app_config
+    global app_config, dispatcher
     
     try:
-        # Clear handler cache and load handlers
+        # Clear handler cache and load handlers - BURASI DÜZELTİLMELİ
         await clear_handler_cache()
+        
+        # Handler'ları senkron olarak yükle
         load_results = await load_handlers(dispatcher)
         
         if load_results.get("failed", 0) > 0:
             logger.warning(f"⚠️ {load_results['failed']} handlers failed to load")
+        
+        # Mevcut webhook ayarları...
         
         # Set webhook if webhook is configured
         # New behavior: always set webhook to <WEBHOOK_HOST>/webhook/<BOT_TOKEN>
@@ -604,3 +609,4 @@ if __name__ == "__main__":
     except Exception as e:
         logger.critical(f"💥 Fatal error: {e}")
         exit(1)
+
