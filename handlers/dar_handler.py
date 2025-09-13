@@ -299,6 +299,11 @@ async def handle_dar_command(message: Message) -> None:
 
 
 # Handler loader compatibility
-async def register_handlers(router_instance: Router):
+#async def register_handlers(router_instance: Router):
+#    """Register handlers with the router - required for handler_loader"""
+#    router_instance.include_router(router)
+
+# Yeni:
+def register_handlers(router_instance: Router):
     """Register handlers with the router - required for handler_loader"""
     router_instance.include_router(router)
