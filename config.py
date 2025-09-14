@@ -38,7 +38,7 @@ class BotConfig:
     
     # Webhook settings
     USE_WEBHOOK: bool = field(default_factory=lambda: os.getenv("USE_WEBHOOK", "false").lower() == "true")
-    WEBHOOK_HOST: str = field(default_factory=lambda: os.getenv("WEBHOOK_HOST", ""))
+    WEBHOOK_HOST: str = field(default_factory=lambda: os.getenv("WEBHOOK_HOST", "")) #url adresi orn:https://abc2.onrender.com
     WEBHOOK_SECRET: str = field(default_factory=lambda: os.getenv("WEBHOOK_SECRET", ""))
     WEBAPP_HOST: str = field(default_factory=lambda: os.getenv("WEBAPP_HOST", "0.0.0.0"))
     WEBAPP_PORT: int = field(default_factory=lambda: int(os.getenv("PORT", "3000")))  # Render PORT variable
@@ -223,3 +223,4 @@ def get_redis_config() -> Dict[str, Any]:
         "port": config.AIOGRAM_REDIS_PORT,
         "db": config.AIOGRAM_REDIS_DB,
     }
+
