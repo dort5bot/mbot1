@@ -1,0 +1,102 @@
+
+
+kripto borsa/ piyasa analizi
+taslak
+
+exchanges/
+	├─ binance/
+	│   ├─ client.py      # API bağlantısı
+	│   ├─ trades.py      # trade verileri
+	│   ├─ orderbook.py   # orderbook verileri
+	│   └─ funding.py     # fonlama oranları
+	├─ bybit/             # gelecekte eklenebilir
+	└─ base_exchange.py   # tüm exchange’ler için ortak interface
+
+	
+analysis/
+	│
+	├── __init__.py
+	├─ tremo.py        # Trend & Momentum
+	├─ regime.py       # Rejim/Volatilite
+	├─ derivs.py       # Türevler
+	├─ orderflow.py    # Order Flow
+	├─ causality.py    # Korelasyon & Lead-Lag
+	├─ onchain.py      # On-chain veriler
+	├─ risk.py         # Risk yönetimi
+	├─ metrics.py      # genel metrikler
+	├─ monte_carlo.py  # simülasyon
+	│
+	└─ analysis_a.py   # aggregator / final skor
+
+
+ 
+	
+
+
+
+			
+analysis_a.py 
+* tek referans noktası → handler sadece burayı çağırır
+* sadece agregasyon ve skor birleştirme olsun, analiz fonksiyonlarını buraya koyma
+* A'dan F'ye kadar olan modülleri çalıştırır ve 
+alpha_signal_score = +0.75 (güçlü al sinyali) üretir.
+* G modülünü (risk.py) çalıştırır ve 
+position_risk_score = 0.6 (yüksek volatilite nedeniyle pozisyonu %60 ile sınırla) üretir.
+* gnosis_signal = alpha_signal_score * position_risk_score
+Sonuç: 0.75 * 0.6 = 0.45 (Orta güçte bir AL sinyali. Pozisyon büyüklüğünü normalin %60'ı kadar tut.)
+
+(handlerde) * gnosis_signal sonucu pozisyon boyutu ve yönü ayarlamak için threshold’lar belirleyebilirsin:
+0.7 → Full AL, 	,	0.4-0.7 → Orta AL (%60 pozisyon), <0.4 → Bekle / no trade
+
+“Gnosis” (bilgi) kelimesinden gelir.
+Anlam: “Bilgi puanı” ya da “içgörü puanı”
+
+
+========
+Modül	Grup -> İçerik : Amaç → İçerik → Amaç		
+A. tremo.py	A. Trend & Momentum (TA) -> EMA, RSI, MACD, Bollinger, ATR : Klasik teknik yön tayini → EMA, RSI, MACD, Bollinger, ATR → Klasik teknik yön tayini	EMA, RSI, MACD, Bollinger, ATR	Klasik teknik yön tayini
+B. regime.py	B. Piyasa Rejimi -> Volatilite (σ), Entropy, Trend/Range tespiti (Hurst, Regime Switching) : Piyasanın modunu anlamak → Volatilite (σ), Entropy, Trend/Range tespiti (Hurst, Regime Switching) → Piyasanın modunu anlamak	Volatilite (σ), Entropy, Trend/Range tespiti (Hurst, Regime Switching)	Piyasanın modunu anlamak
+C. derivs.py	C. Derivatives & Sentiment -> Funding rate, OI, Long/Short ratio, Liquidation heatmap : Trader’ların positioning davranışı → Funding rate, OI, Long/Short ratio, Liquidation heatmap → Trader’ların positioning davranışı	Funding rate, OI, Long/Short ratio, Liquidation heatmap	Trader’ların positioning davranışı
+D. orderflow.py	D. Order Flow & Microstructure -> Orderbook imbalance, Spread, Market buy/sell pressure : Anlık likidite ve yön → Orderbook imbalance, Spread, Market buy/sell pressure → Anlık likidite ve yön	Orderbook imbalance, Spread, Market buy/sell pressure	Anlık likidite ve yön
+E. causality.py	E. Korelasyon & Lead-Lag -> BTC → ETH → Altlar, Granger test, Beta exposure : Lider coinlerden yön almak → BTC → ETH → Altlar, Granger test, Beta exposure → Lider coinlerden yön almak	BTC → ETH → Altlar, Granger test, Beta exposure	Lider coinlerden yön almak
+F. onchain.py	F. On-Chain & Makro (opsiyonel ileri aşama) -> Stablecoin flow, CEX inflow/outflow, ETF net flow : Ekstra büyük resim verisi → Stablecoin flow, CEX inflow/outflow, ETF net flow → Ekstra büyük resim verisi	Stablecoin flow, CEX inflow/outflow, ETF net flow	Ekstra büyük resim verisi
+G. risk.py	G. risk.py: KORUMA. Diğer 6 modülün ürettiği sinyalin ne kadarına maruz kalınacağını belirler. Risk ölçümü (ATR Stop) ve riskli bölgelerden kaçınma (Liquidation Proximity) burada.		
+analysis_a.py.py	Final → A-F skorlarının normalize edilmiş ağırlıklı birleşimi → Market Direction Score	A-F skorlarının normalize edilmiş ağırlıklı birleşimi	Market Direction Score
+
+
+
+====
+temel metrikler
+Modüler Yapı ve Metrik Dağılımı
+Modül → Ana Odak → Çekirdek Metrikler (Zorunlu) →→Çıktı Aralığı
+A. tremo.py → Yön ve Momentum → EMA Ribbon (20,50,200), RSI (14), MACD (12,26,9), SuperTrend (10,3) →→-1 (Bearish) ile +1 (Bullish) arası
+B. regime.py → Piyasa Modu(trend/ range) → ADX (14), BBW (20), Hurst Exponent (100), ATR (14) →→-1 (Range) ile +1 (Trend) arası. ADX, BBW için 0-1
+C. derivs.py → Türev Piyasa Sentiment → Funding Rate, Open Interest, Taker Buy/Sell Ratio →→-1 (Bearish) ile +1 (Bullish) arası
+D. orderflow.py → Anlık Likidite → Order Book Imbalance (1%), Market Buy/Sell Volume →→-1 (Satış Baskısı) ile +1 (Alım Baskısı) arası
+E. causality.py → Lider-Takipçi Dinamiği → BTC Dominance, ETH/BTC Pair Correlation, Granger Causality (BTC->ALT) →→-1 (Altcoin Bear) ile +1 (Altcoin Bull) arası
+F. onchain.py → Büyük Resim → Stablecoin Supply Ratio, Exchange Net Flow →→-1 (Bearish) ile +1 (Bullish) arası
+G. risk.py → Pozisyon Büyüklüğü → ATR (14) Stop-Loss, Liquidation Proximity, Portfolio VAR →→0 (Riskli, İşlem Yok) ile +1 (Güvenli, Full Pozisyon) arası
+
+
+opsiyonel metrikler
+→ + → İleri Seviye Metrikler (Opsiyonel)
+A. tremo.py→ + → Volume-Weighted MACD, Ichimoku Cloud
+B. regime.py→ + → VHF, Kálmán Filtresi, Markov Rejim Değişimi
+C. derivs.py→ + → Long/Short Ratio, Liquidations (Heatmap)
+D. orderflow.py→ + → Cumulative Delta, Depth Chart Analysis
+E. causality.py→ + → Beta Exposure Analysis, Cross-Exchange Flow
+F. onchain.py→ + → MVRV Z-Score, SOPR, ETF Flows
+G. risk.py→ + → Correlation Risk, Maximum Drawdown
+
+
+analysis_a.py.py içinde her modülün skorunu loglayan detaylı bir verbose / debug modu olmalı.
+analysis_a.py.py tarafından üretilen skorların cache’lenmesi (ör. bir dakika boyunca) sistem yükünü azaltabilir.
+onchain.py modülünün veriye ulaşamama ihtimaline karşı, fallback stratejisi düşünülmeli (ör. skor = 0.0).
+
+
+not: monte_carlo.py
+Belirsizliği ölçer
+Extreme senaryoları analiz eder ("black swan" event'ları)
+Karar almada yardımcı olur
+Risk yönetimi sağlar
+
