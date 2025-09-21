@@ -18,6 +18,7 @@ pytz==2024.1
 python-dateutil==2.9.0.post0
 python-dotenv==1.0.0
 #python-telegram-bot==20.7
+statsmodels>=0.14
 tzdata
 typing-extensions==4.12.2
 websockets==13.0
