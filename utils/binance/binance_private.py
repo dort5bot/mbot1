@@ -1,4 +1,5 @@
-"""utils/binance/binance_private.py
+"""
+utils/binance/binance_private.py
 --------------------------------
 Binance Private API endpoints (API key gerektiren).
 Spot Account & Orders
@@ -11,12 +12,9 @@ Mining
 Sub-accounts
 
 🔐 Özellikler:
+- üm metodları circuit_breaker.execute ile sarmalanmış
 - Sadece Private Endpoint'ler (Spot + Futures + Margin + Staking + Savings + Mining + Sub-accounts)
-- Async / await uyumlu
-- Singleton yapı
-- Logging desteği
-- PEP8 uyumlu
-- Type hints + docstring
+- Async / await uyumlu + Singleton yapı + Logging desteği + PEP8 uyumlu + Type hints + docstring
 """
 
 import logging
@@ -67,7 +65,9 @@ class BinancePrivateAPI:
         """Hesap bakiyesi getir (varlık belirtilirse sadece o varlığı döndürür)."""
         try:
             await self._require_keys()
-            account_info = await self.http._request("GET", "/api/v3/account", signed=True)
+            account_info = await self.circuit_breaker.execute(
+                self.http._request, "GET", "/api/v3/account", signed=True
+            )
             if asset:
                 asset = asset.upper()
                 for balance in account_info.get("balances", []):
@@ -91,7 +91,9 @@ class BinancePrivateAPI:
                 params["timeInForce"] = time_in_force
             if stop_price:
                 params["stopPrice"] = stop_price
-            return await self.http._request("POST", "/api/v3/order", params=params, signed=True)
+            return await self.circuit_breaker.execute(
+                self.http._request, "POST", "/api/v3/order", params=params, signed=True
+            )
         except Exception as e:
             logger.exception(f"🚨 Error placing spot order for {symbol}")
             raise BinanceAPIError(f"Error placing spot order for {symbol}: {e}")
@@ -105,7 +107,9 @@ class BinancePrivateAPI:
                 params["orderId"] = order_id
             if orig_client_order_id:
                 params["origClientOrderId"] = orig_client_order_id
-            return await self.http._request("DELETE", "/api/v3/order", params=params, signed=True)
+            return await self.circuit_breaker.execute(
+                self.http._request, "DELETE", "/api/v3/order", params=params, signed=True
+            )
         except Exception as e:
             logger.exception(f"🚨 Error canceling spot order for {symbol}")
             raise BinanceAPIError(f"Error canceling spot order for {symbol}: {e}")
@@ -115,7 +119,9 @@ class BinancePrivateAPI:
         try:
             await self._require_keys()
             params = {"symbol": symbol.upper()} if symbol else {}
-            return await self.http._request("GET", "/api/v3/openOrders", params=params, signed=True)
+            return await self.circuit_breaker.execute(
+                self.http._request, "GET", "/api/v3/openOrders", params=params, signed=True
+            )
         except Exception as e:
             logger.exception("🚨 Error getting open orders")
             raise BinanceAPIError(f"Error getting open orders: {e}")
@@ -125,7 +131,9 @@ class BinancePrivateAPI:
         try:
             await self._require_keys()
             params = {"symbol": symbol.upper(), "limit": limit}
-            return await self.http._request("GET", "/api/v3/allOrders", params=params, signed=True)
+            return await self.circuit_breaker.execute(
+                self.http._request, "GET", "/api/v3/allOrders", params=params, signed=True
+            )
         except Exception as e:
             logger.exception(f"🚨 Error getting spot order history for {symbol}")
             raise BinanceAPIError(f"Error getting spot order history for {symbol}: {e}")
@@ -147,7 +155,9 @@ class BinancePrivateAPI:
         try:
             await self._require_keys()
             params = {"symbol": symbol.upper(), "limit": limit}
-            return await self.http._request("GET", "/api/v3/myTrades", params=params, signed=True)
+            return await self.circuit_breaker.execute(
+                self.http._request, "GET", "/api/v3/myTrades", params=params, signed=True
+            )
         except Exception as e:
             logger.exception(f"🚨 Error getting trade history for {symbol}")
             raise BinanceAPIError(f"Error getting trade history for {symbol}: {e}")
@@ -159,7 +169,9 @@ class BinancePrivateAPI:
         """Futures hesap bilgilerini getir."""
         try:
             await self._require_keys()
-            return await self.http._request("GET", "/fapi/v2/account", signed=True, futures=True)
+            return await self.circuit_breaker.execute(
+                self.http._request, "GET", "/fapi/v2/account", signed=True, futures=True
+            )
         except Exception as e:
             logger.exception("🚨 Error getting futures account info")
             raise BinanceAPIError(f"Error getting futures account info: {e}")
@@ -178,7 +190,9 @@ class BinancePrivateAPI:
         """Futures açık pozisyonları getir."""
         try:
             await self._require_keys()
-            return await self.http._request("GET", "/fapi/v2/positionRisk", signed=True, futures=True)
+            return await self.circuit_breaker.execute(
+                self.http._request, "GET", "/fapi/v2/positionRisk", signed=True, futures=True
+            )
         except Exception as e:
             logger.exception("🚨 Error getting futures positions")
             raise BinanceAPIError(f"Error getting futures positions: {e}")
@@ -210,7 +224,9 @@ class BinancePrivateAPI:
                 params["timeInForce"] = time_in_force
             if stop_price:
                 params["stopPrice"] = stop_price
-            return await self.http._request("POST", "/fapi/v1/order", params=params, signed=True, futures=True)
+            return await self.circuit_breaker.execute(
+                self.http._request, "POST", "/fapi/v1/order", params=params, signed=True, futures=True
+            )
         except Exception as e:
             logger.exception(f"🚨 Error placing futures order for {symbol}")
             raise BinanceAPIError(f"Error placing futures order for {symbol}: {e}")
@@ -224,7 +240,9 @@ class BinancePrivateAPI:
                 params["orderId"] = order_id
             if orig_client_order_id:
                 params["origClientOrderId"] = orig_client_order_id
-            return await self.http._request("DELETE", "/fapi/v1/order", params=params, signed=True, futures=True)
+            return await self.circuit_breaker.execute(
+                self.http._request, "DELETE", "/fapi/v1/order", params=params, signed=True, futures=True
+            )
         except Exception as e:
             logger.exception(f"🚨 Error canceling futures order for {symbol}")
             raise BinanceAPIError(f"Error canceling futures order for {symbol}: {e}")
@@ -234,7 +252,9 @@ class BinancePrivateAPI:
         try:
             await self._require_keys()
             params = {"symbol": symbol.upper()} if symbol else {}
-            return await self.http._request("GET", "/fapi/v1/openOrders", params=params, signed=True, futures=True)
+            return await self.circuit_breaker.execute(
+                self.http._request, "GET", "/fapi/v1/openOrders", params=params, signed=True, futures=True
+            )
         except Exception as e:
             logger.exception("🚨 Error getting futures open orders")
             raise BinanceAPIError(f"Error getting futures open orders: {e}")
@@ -244,7 +264,9 @@ class BinancePrivateAPI:
         try:
             await self._require_keys()
             params = {"symbol": symbol.upper(), "limit": limit}
-            return await self.http._request("GET", "/fapi/v1/allOrders", params=params, signed=True, futures=True)
+            return await self.circuit_breaker.execute(
+                self.http._request, "GET", "/fapi/v1/allOrders", params=params, signed=True, futures=True
+            )
         except Exception as e:
             logger.exception(f"🚨 Error getting futures order history for {symbol}")
             raise BinanceAPIError(f"Error getting futures order history for {symbol}: {e}")
@@ -258,7 +280,9 @@ class BinancePrivateAPI:
                 params["symbol"] = symbol.upper()
             if income_type:
                 params["incomeType"] = income_type
-            return await self.http._request("GET", "/fapi/v1/income", params=params, signed=True, futures=True)
+            return await self.circuit_breaker.execute(
+                self.http._request, "GET", "/fapi/v1/income", params=params, signed=True, futures=True
+            )
         except Exception as e:
             logger.exception("🚨 Error getting futures income history")
             raise BinanceAPIError(f"Error getting futures income history: {e}")
@@ -268,7 +292,9 @@ class BinancePrivateAPI:
         try:
             await self._require_keys()
             params = {"symbol": symbol.upper(), "leverage": leverage}
-            return await self.http._request("POST", "/fapi/v1/leverage", params=params, signed=True, futures=True)
+            return await self.circuit_breaker.execute(
+                self.http._request, "POST", "/fapi/v1/leverage", params=params, signed=True, futures=True
+            )
         except Exception as e:
             logger.exception(f"🚨 Error changing futures leverage for {symbol}")
             raise BinanceAPIError(f"Error changing futures leverage for {symbol}: {e}")
@@ -278,7 +304,9 @@ class BinancePrivateAPI:
         try:
             await self._require_keys()
             params = {"symbol": symbol.upper(), "marginType": margin_type.upper()}
-            return await self.http._request("POST", "/fapi/v1/marginType", params=params, signed=True, futures=True)
+            return await self.circuit_breaker.execute(
+                self.http._request, "POST", "/fapi/v1/marginType", params=params, signed=True, futures=True
+            )
         except Exception as e:
             logger.exception(f"🚨 Error changing futures margin type for {symbol}")
             raise BinanceAPIError(f"Error changing futures margin type for {symbol}: {e}")
@@ -288,7 +316,9 @@ class BinancePrivateAPI:
         try:
             await self._require_keys()
             params = {"dualSidePosition": "true" if dual_side_position else "false"}
-            return await self.http._request("POST", "/fapi/v1/positionSide/dual", params=params, signed=True, futures=True)
+            return await self.circuit_breaker.execute(
+                self.http._request, "POST", "/fapi/v1/positionSide/dual", params=params, signed=True, futures=True
+            )
         except Exception as e:
             logger.exception("🚨 Error setting futures position mode")
             raise BinanceAPIError(f"Error setting futures position mode: {e}")
@@ -300,7 +330,9 @@ class BinancePrivateAPI:
         """Margin hesap bilgilerini getir."""
         try:
             await self._require_keys()
-            return await self.http._request("GET", "/sapi/v1/margin/account", signed=True)
+            return await self.circuit_breaker.execute(
+                self.http._request, "GET", "/sapi/v1/margin/account", signed=True
+            )
         except Exception as e:
             logger.exception("🚨 Error getting margin account info")
             raise BinanceAPIError(f"Error getting margin account info: {e}")
@@ -312,7 +344,9 @@ class BinancePrivateAPI:
             params: Dict[str, Any] = {"symbol": symbol.upper(), "side": side, "type": type_, "quantity": quantity}
             if price:
                 params["price"] = price
-            return await self.http._request("POST", "/sapi/v1/margin/order", params=params, signed=True)
+            return await self.circuit_breaker.execute(
+                self.http._request, "POST", "/sapi/v1/margin/order", params=params, signed=True
+            )
         except Exception as e:
             logger.exception(f"🚨 Error creating margin order for {symbol}")
             raise BinanceAPIError(f"Error creating margin order for {symbol}: {e}")
@@ -322,7 +356,9 @@ class BinancePrivateAPI:
         try:
             await self._require_keys()
             params = {"symbol": symbol.upper()} if symbol else {}
-            return await self.http._request("GET", "/sapi/v1/margin/openOrders", params=params, signed=True)
+            return await self.circuit_breaker.execute(
+                self.http._request, "GET", "/sapi/v1/margin/openOrders", params=params, signed=True
+            )
         except Exception as e:
             logger.exception("🚨 Error getting margin open orders")
             raise BinanceAPIError(f"Error getting margin open orders: {e}")
@@ -337,7 +373,9 @@ class BinancePrivateAPI:
             params: Dict[str, Any] = {"product": product}
             if asset:
                 params["asset"] = asset.upper()
-            return await self.http._request("GET", "/sapi/v1/staking/productList", params=params, signed=True)
+            return await self.circuit_breaker.execute(
+                self.http._request, "GET", "/sapi/v1/staking/productList", params=params, signed=True
+            )
         except Exception as e:
             logger.exception("🚨 Error getting staking product list")
             raise BinanceAPIError(f"Error getting staking product list: {e}")
@@ -347,7 +385,9 @@ class BinancePrivateAPI:
         try:
             await self._require_keys()
             params = {"product": product, "productId": product_id, "amount": amount}
-            return await self.http._request("POST", "/sapi/v1/staking/purchase", params=params, signed=True)
+            return await self.circuit_breaker.execute(
+                self.http._request, "POST", "/sapi/v1/staking/purchase", params=params, signed=True
+            )
         except Exception as e:
             logger.exception("🚨 Error staking asset")
             raise BinanceAPIError(f"Error staking asset: {e}")
@@ -361,7 +401,9 @@ class BinancePrivateAPI:
                 params["positionId"] = position_id
             if amount:
                 params["amount"] = amount
-            return await self.http._request("POST", "/sapi/v1/staking/redeem", params=params, signed=True)
+            return await self.circuit_breaker.execute(
+                self.http._request, "POST", "/sapi/v1/staking/redeem", params=params, signed=True
+            )
         except Exception as e:
             logger.exception("🚨 Error unstaking asset")
             raise BinanceAPIError(f"Error unstaking asset: {e}")
@@ -377,7 +419,9 @@ class BinancePrivateAPI:
                 params["startTime"] = start_time
             if end_time:
                 params["endTime"] = end_time
-            return await self.http._request("GET", "/sapi/v1/staking/stakingRecord", params=params, signed=True)
+            return await self.circuit_breaker.execute(
+                self.http._request, "GET", "/sapi/v1/staking/stakingRecord", params=params, signed=True
+            )
         except Exception as e:
             logger.exception("🚨 Error getting staking history")
             raise BinanceAPIError(f"Error getting staking history: {e}")
@@ -390,7 +434,9 @@ class BinancePrivateAPI:
         try:
             await self._require_keys()
             endpoint = "/fapi/v1/listenKey" if futures else "/api/v3/userDataStream"
-            return await self.http._request("POST", endpoint, signed=True, futures=futures)
+            return await self.circuit_breaker.execute(
+                self.http._request, "POST", endpoint, signed=True, futures=futures
+            )
         except Exception as e:
             logger.exception("🚨 Error creating listen key")
             raise BinanceAPIError(f"Error creating listen key: {e}")
@@ -401,7 +447,9 @@ class BinancePrivateAPI:
             await self._require_keys()
             endpoint = "/fapi/v1/listenKey" if futures else "/api/v3/userDataStream"
             params = {"listenKey": listen_key}
-            return await self.http._request("PUT", endpoint, params=params, signed=True, futures=futures)
+            return await self.circuit_breaker.execute(
+                self.http._request, "PUT", endpoint, params=params, signed=True, futures=futures
+            )
         except Exception as e:
             logger.exception("🚨 Error keeping alive listen key")
             raise BinanceAPIError(f"Error keeping alive listen key: {e}")
@@ -412,7 +460,9 @@ class BinancePrivateAPI:
             await self._require_keys()
             endpoint = "/fapi/v1/listenKey" if futures else "/api/v3/userDataStream"
             params = {"listenKey": listen_key}
-            return await self.http._request("DELETE", endpoint, params=params, signed=True, futures=futures)
+            return await self.circuit_breaker.execute(
+                self.http._request, "DELETE", endpoint, params=params, signed=True, futures=futures
+            )
         except Exception as e:
             logger.exception("🚨 Error closing listen key")
             raise BinanceAPIError(f"Error closing listen key: {e}")
@@ -427,7 +477,9 @@ class BinancePrivateAPI:
             params: Dict[str, Any] = {"type": product_type}
             if asset:
                 params["asset"] = asset.upper()
-            return await self.http._request("GET", "/sapi/v1/lending/daily/product/list", params=params, signed=True)
+            return await self.circuit_breaker.execute(
+                self.http._request, "GET", "/sapi/v1/lending/daily/product/list", params=params, signed=True
+            )
         except Exception as e:
             logger.exception("🚨 Error getting savings product list")
             raise BinanceAPIError(f"Error getting savings product list: {e}")
@@ -437,7 +489,9 @@ class BinancePrivateAPI:
         try:
             await self._require_keys()
             params = {"productId": product_id, "amount": amount}
-            return await self.http._request("POST", "/sapi/v1/lending/daily/purchase", params=params, signed=True)
+            return await self.circuit_breaker.execute(
+                self.http._request, "POST", "/sapi/v1/lending/daily/purchase", params=params, signed=True
+            )
         except Exception as e:
             logger.exception("🚨 Error purchasing savings product")
             raise BinanceAPIError(f"Error purchasing savings product: {e}")
@@ -447,7 +501,9 @@ class BinancePrivateAPI:
         try:
             await self._require_keys()
             params = {"asset": asset.upper()} if asset else {}
-            return await self.http._request("GET", "/sapi/v1/lending/daily/token/position", params=params, signed=True)
+            return await self.circuit_breaker.execute(
+                self.http._request, "GET", "/sapi/v1/lending/daily/token/position", params=params, signed=True
+            )
         except Exception as e:
             logger.exception("🚨 Error getting savings balance")
             raise BinanceAPIError(f"Error getting savings balance: {e}")
@@ -464,7 +520,9 @@ class BinancePrivateAPI:
                 params["startTime"] = start_time
             if end_time:
                 params["endTime"] = end_time
-            return await self.http._request("GET", "/sapi/v1/mining/payment/list", params=params, signed=True)
+            return await self.circuit_breaker.execute(
+                self.http._request, "GET", "/sapi/v1/mining/payment/list", params=params, signed=True
+            )
         except Exception as e:
             logger.exception("🚨 Error getting mining earnings list")
             raise BinanceAPIError(f"Error getting mining earnings list: {e}")
@@ -474,7 +532,9 @@ class BinancePrivateAPI:
         try:
             await self._require_keys()
             params = {"algo": algo}
-            return await self.http._request("GET", "/sapi/v1/mining/worker/list", params=params, signed=True)
+            return await self.circuit_breaker.execute(
+                self.http._request, "GET", "/sapi/v1/mining/worker/list", params=params, signed=True
+            )
         except Exception as e:
             logger.exception("🚨 Error getting mining account list")
             raise BinanceAPIError(f"Error getting mining account list: {e}")
@@ -487,7 +547,9 @@ class BinancePrivateAPI:
         try:
             await self._require_keys()
             params = {"email": email} if email else {}
-            return await self.http._request("GET", "/sapi/v1/sub-account/list", params=params, signed=True)
+            return await self.circuit_breaker.execute(
+                self.http._request, "GET", "/sapi/v1/sub-account/list", params=params, signed=True
+            )
         except Exception as e:
             logger.exception("🚨 Error getting sub-account list")
             raise BinanceAPIError(f"Error getting sub-account list: {e}")
@@ -497,7 +559,9 @@ class BinancePrivateAPI:
         try:
             await self._require_keys()
             params = {"subAccountString": sub_account_string}
-            return await self.http._request("POST", "/sapi/v1/sub-account/virtualSubAccount", params=params, signed=True)
+            return await self.circuit_breaker.execute(
+                self.http._request, "POST", "/sapi/v1/sub-account/virtualSubAccount", params=params, signed=True
+            )
         except Exception as e:
             logger.exception("🚨 Error creating sub-account")
             raise BinanceAPIError(f"Error creating sub-account: {e}")
@@ -507,7 +571,9 @@ class BinancePrivateAPI:
         try:
             await self._require_keys()
             params = {"email": email}
-            return await self.http._request("GET", "/sapi/v3/sub-account/assets", params=params, signed=True)
+            return await self.circuit_breaker.execute(
+                self.http._request, "GET", "/sapi/v3/sub-account/assets", params=params, signed=True
+            )
         except Exception as e:
             logger.exception("🚨 Error getting sub-account assets")
             raise BinanceAPIError(f"Error getting sub-account assets: {e}")
@@ -536,7 +602,9 @@ class BinancePrivateAPI:
                 params["startTime"] = start_time
             if end_time:
                 params["endTime"] = end_time
-            return await self.http._request("GET", "/sapi/v1/asset/dribblet", params=params, signed=True)
+            return await self.circuit_breaker.execute(
+                self.http._request, "GET", "/sapi/v1/asset/dribblet", params=params, signed=True
+            )
         except Exception as e:
             logger.exception("🚨 Error getting dust log")
             raise BinanceAPIError(f"Error getting dust log: {e}")
@@ -557,7 +625,9 @@ class BinancePrivateAPI:
         try:
             await self._require_keys()
             params = {"asset": ",".join([a.upper() for a in asset])}
-            return await self.http._request("POST", "/sapi/v1/asset/dust", params=params, signed=True)
+            return await self.circuit_breaker.execute(
+                self.http._request, "POST", "/sapi/v1/asset/dust", params=params, signed=True
+            )
         except Exception as e:
             logger.exception("🚨 Error converting dust")
             raise BinanceAPIError(f"Error converting dust: {e}")
@@ -581,7 +651,9 @@ class BinancePrivateAPI:
             params = {"coin": coin.upper()}
             if network:
                 params["network"] = network
-            return await self.http._request("GET", "/sapi/v1/capital/deposit/address", params=params, signed=True)
+            return await self.circuit_breaker.execute(
+                self.http._request, "GET", "/sapi/v1/capital/deposit/address", params=params, signed=True
+            )
         except Exception as e:
             logger.exception(f"🚨 Error getting deposit address for {coin}")
             raise BinanceAPIError(f"Error getting deposit address for {coin}: {e}")
@@ -614,7 +686,9 @@ class BinancePrivateAPI:
                 params["startTime"] = start_time
             if end_time:
                 params["endTime"] = end_time
-            return await self.http._request("GET", "/sapi/v1/capital/deposit/hisrec", params=params, signed=True)
+            return await self.circuit_breaker.execute(
+                self.http._request, "GET", "/sapi/v1/capital/deposit/hisrec", params=params, signed=True
+            )
         except Exception as e:
             logger.exception("🚨 Error getting deposit history")
             raise BinanceAPIError(f"Error getting deposit history: {e}")
@@ -648,7 +722,9 @@ class BinancePrivateAPI:
                 params["startTime"] = start_time
             if end_time:
                 params["endTime"] = end_time
-            return await self.http._request("GET", "/sapi/v1/capital/withdraw/history", params=params, signed=True)
+            return await self.circuit_breaker.execute(
+                self.http._request, "GET", "/sapi/v1/capital/withdraw/history", params=params, signed=True
+            )
         except Exception as e:
             logger.exception("🚨 Error getting withdrawal history")
             raise BinanceAPIError(f"Error getting withdrawal history: {e}")
@@ -682,7 +758,9 @@ class BinancePrivateAPI:
                 params["network"] = network
             if address_tag:
                 params["addressTag"] = address_tag
-            return await self.http._request("POST", "/sapi/v1/capital/withdraw/apply", params=params, signed=True)
+            return await self.circuit_breaker.execute(
+                self.http._request, "POST", "/sapi/v1/capital/withdraw/apply", params=params, signed=True
+            )
         except Exception as e:
             logger.exception(f"🚨 Error withdrawing {coin}")
             raise BinanceAPIError(f"Error withdrawing {coin}: {e}")

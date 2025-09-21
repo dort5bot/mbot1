@@ -1,17 +1,24 @@
 """
+utils/binance/binance_metrics.py
 Metrics and monitoring for Binance API.
+Tamamen Async Yapı+Thread-Safe+Atomic Operations
+async/await pattern'ine uygun + aiogram 3.x e uygun + Router pattern yapıda +  PEP8 + type hints + docstring + async yapı + singleton + logging olacak yapıda
+Değişken isimleri ve yapı daha tutarlı
+
 """
 
 import time
 import asyncio
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Tuple
 from dataclasses import dataclass, field
 from collections import deque
+from threading import Lock
 import statistics
 import logging
+from contextlib import asynccontextmanager
+
 
 logger = logging.getLogger(__name__)
-
 
 @dataclass
 class RequestMetrics:
@@ -23,46 +30,55 @@ class RequestMetrics:
     response_times: deque = field(default_factory=lambda: deque(maxlen=1000))
     errors_by_type: Dict[str, int] = field(default_factory=dict)
 
-
 @dataclass
 class RateLimitMetrics:
     """Metrics for rate limiting."""
-    requests_per_minute: float = 0
-    orders_per_second: float = 0
     weight_used: int = 0
-    weight_limit: int = 1200  # Default Binance weight limit
-
+    weight_limit: int = 1200
+    last_reset_time: float = field(default_factory=time.time)
 
 class AdvancedMetrics:
     """
-    Advanced metrics collection and monitoring for Binance API.
+    Thread-safe advanced async metrics collection.
     """
     
-    def __init__(self, window_size: int = 100):
-        """
-        Initialize metrics collector.
-        
-        Args:
-            window_size: Size of sliding window for metrics
-        """
+    _instance: Optional["AdvancedMetrics"] = None
+    _lock: Lock = Lock()
+    
+    def __new__(cls, window_size: int = 1000) -> "AdvancedMetrics":
+        """Singleton pattern with thread safety."""
+        with cls._lock:
+            if cls._instance is None:
+                cls._instance = super().__new__(cls)
+                cls._instance._initialize(window_size)
+            return cls._instance
+    
+    def _initialize(self, window_size: int) -> None:
+        """Initialize metrics instance."""
         self.window_size = window_size
         self.request_metrics = RequestMetrics()
         self.rate_limit_metrics = RateLimitMetrics()
         self.start_time = time.time()
-        self.lock = asyncio.Lock()
-        logger.info("✅ AdvancedMetrics initialized")
+        self._async_lock = asyncio.Lock()  # Async operations için lock
+        logger.info("✅ AdvancedMetrics initialized with async support")
+
+    @asynccontextmanager
+    async def _atomic_operation(self):
+        """Async context manager for atomic operations."""
+        async with self._async_lock:
+            yield
     
     async def record_request(self, success: bool, response_time: float, 
                            error_type: Optional[str] = None) -> None:
         """
-        Record API request metrics.
+        Record API request metrics asynchronously.
         
         Args:
             success: Whether the request was successful
             response_time: Response time in seconds
             error_type: Type of error if request failed
         """
-        async with self.lock:
+        async with self._async_lock:
             self.request_metrics.total_requests += 1
             self.request_metrics.total_response_time += response_time
             self.request_metrics.response_times.append(response_time)
@@ -78,127 +94,250 @@ class AdvancedMetrics:
     
     async def record_rate_limit(self, weight_used: int = 1) -> None:
         """
-        Record rate limit usage.
+        Record rate limit usage asynchronously.
         
         Args:
             weight_used: Weight used by the request
         """
-        async with self.lock:
+        async with self._async_lock:
             self.rate_limit_metrics.weight_used += weight_used
     
-    async def reset_rate_limit(self) -> None:
-        """Reset rate limit metrics."""
-        async with self.lock:
-            self.rate_limit_metrics.weight_used = 0
-    
-    def get_metrics(self) -> Dict[str, Any]:
-        """Get all current metrics."""
-        async def _get_metrics():
-            async with self.lock:
-                response_times = list(self.request_metrics.response_times)
-                avg_response_time = (self.request_metrics.total_response_time / 
-                                   self.request_metrics.total_requests if 
-                                   self.request_metrics.total_requests > 0 else 0)
-                
-                return {
-                    "uptime_seconds": time.time() - self.start_time,
-                    "total_requests": self.request_metrics.total_requests,
-                    "successful_requests": self.request_metrics.successful_requests,
-                    "failed_requests": self.request_metrics.failed_requests,
-                    "success_rate": (
-                        self.request_metrics.successful_requests / 
-                        self.request_metrics.total_requests * 100 
-                        if self.request_metrics.total_requests > 0 else 100
-                    ),
-                    "average_response_time": avg_response_time,
-                    "min_response_time": min(response_times) if response_times else 0,
-                    "max_response_time": max(response_times) if response_times else 0,
-                    "p95_response_time": (
-                        statistics.quantiles(response_times, n=100)[94] 
-                        if len(response_times) >= 5 else 0
-                    ),
-                    "current_rpm": self._calculate_rpm(),
-                    "weight_used": self.rate_limit_metrics.weight_used,
-                    "weight_remaining": (
-                        self.rate_limit_metrics.weight_limit - 
-                        self.rate_limit_metrics.weight_used
-                    ),
-                    "weight_percentage": (
-                        self.rate_limit_metrics.weight_used / 
-                        self.rate_limit_metrics.weight_limit * 100
-                    ),
-                    "errors_by_type": dict(self.request_metrics.errors_by_type),
-                }
+    async def reset_rate_limit(self, weight_limit: Optional[int] = None) -> None:
+        """
+        Reset rate limit metrics asynchronously.
         
-        # For synchronous access, we need to run async function
-        try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                # If loop is running, we need to create a task
-                future = asyncio.create_task(_get_metrics())
-                loop.run_until_complete(future)
-                return future.result()
-            else:
-                return loop.run_until_complete(_get_metrics())
-        except:
-            # Fallback for edge cases
-            return {}
+        Args:
+            weight_limit: Optional new weight limit
+        """
+        async with self._async_lock:
+            self.rate_limit_metrics.weight_used = 0
+            self.rate_limit_metrics.last_reset_time = time.time()
+            if weight_limit is not None:
+                self.rate_limit_metrics.weight_limit = weight_limit
     
-    def _calculate_rpm(self) -> float:
-        """Calculate requests per minute."""
-        uptime_minutes = (time.time() - self.start_time) / 60
-        return self.request_metrics.total_requests / uptime_minutes if uptime_minutes > 0 else 0
+    async def get_metrics(self) -> Dict[str, Any]:
+        """Get all current metrics asynchronously."""
+        async with self._async_lock:
+            response_times = list(self.request_metrics.response_times)
+            
+            # Calculate statistics safely
+            total_requests = self.request_metrics.total_requests
+            successful_requests = self.request_metrics.successful_requests
+            
+            # Average response time
+            avg_response_time = (
+                self.request_metrics.total_response_time / total_requests 
+                if total_requests > 0 else 0
+            )
+            
+            # Percentile calculation
+            p95_response_time = self._calculate_percentile(response_times, 0.95)
+            p99_response_time = self._calculate_percentile(response_times, 0.99)
+            
+            # Time-based calculations
+            uptime_seconds = time.time() - self.start_time
+            uptime_minutes = uptime_seconds / 60
+            
+            current_rpm = total_requests / uptime_minutes if uptime_minutes > 0 else 0
+            
+            # Rate limit calculations
+            weight_used = self.rate_limit_metrics.weight_used
+            weight_limit = self.rate_limit_metrics.weight_limit
+            
+            return {
+                "uptime_seconds": uptime_seconds,
+                "total_requests": total_requests,
+                "successful_requests": successful_requests,
+                "failed_requests": self.request_metrics.failed_requests,
+                "success_rate": (
+                    successful_requests / total_requests * 100 
+                    if total_requests > 0 else 100
+                ),
+                "average_response_time": avg_response_time,
+                "min_response_time": min(response_times) if response_times else 0,
+                "max_response_time": max(response_times) if response_times else 0,
+                "p95_response_time": p95_response_time,
+                "p99_response_time": p99_response_time,
+                "current_rpm": current_rpm,
+                "weight_used": weight_used,
+                "weight_limit": weight_limit,
+                "weight_remaining": weight_limit - weight_used,
+                "weight_percentage": (
+                    weight_used / weight_limit * 100 
+                    if weight_limit > 0 else 0
+                ),
+                "errors_by_type": dict(self.request_metrics.errors_by_type),
+                "last_reset_seconds_ago": time.time() - self.rate_limit_metrics.last_reset_time,
+            }
+    
+    def _calculate_percentile(self, data: List[float], percentile: float) -> float:
+        """Calculate percentile safely."""
+        if not data:
+            return 0.0
+        
+        try:
+            sorted_data = sorted(data)
+            index = int(len(sorted_data) * percentile)
+            return sorted_data[min(index, len(sorted_data) - 1)]
+        except (IndexError, ValueError, TypeError):
+            return 0.0
     
     async def get_health_status(self) -> Dict[str, Any]:
-        """Get health status based on metrics."""
-        metrics = self.get_metrics()
+        """Get health status based on metrics asynchronously."""
+        metrics = await self.get_metrics()
         
-        success_rate = metrics.get("success_rate", 100)
-        avg_response_time = metrics.get("average_response_time", 0)
-        weight_percentage = metrics.get("weight_percentage", 0)
+        success_rate = metrics.get("success_rate", 100.0)
+        avg_response_time = metrics.get("average_response_time", 0.0)
+        weight_percentage = metrics.get("weight_percentage", 0.0)
+        p95_response_time = metrics.get("p95_response_time", 0.0)
         
         status = "HEALTHY"
         issues = []
+        warnings = []
         
-        if success_rate < 95:
-            status = "DEGRADED"
-            issues.append(f"Low success rate: {success_rate:.1f}%")
-        
-        if avg_response_time > 2.0:  # More than 2 seconds average
-            status = "DEGRADED"
-            issues.append(f"High response time: {avg_response_time:.2f}s")
-        
-        if weight_percentage > 80:
-            status = "DEGRADED"
-            issues.append(f"High rate limit usage: {weight_percentage:.1f}%")
-        
-        if weight_percentage > 95:
+        # Critical issues
+        if success_rate < 90.0:
             status = "CRITICAL"
-            issues.append(f"Critical rate limit usage: {weight_percentage:.1f}%")
+            issues.append(f"Critical: Low success rate: {success_rate:.1f}%")
+        elif success_rate < 95.0:
+            status = "DEGRADED"
+            warnings.append(f"Low success rate: {success_rate:.1f}%")
+        
+        if avg_response_time > 3.0:
+            status = "CRITICAL" if status != "CRITICAL" else status
+            issues.append(f"Critical: High average response time: {avg_response_time:.2f}s")
+        elif avg_response_time > 1.5:
+            status = "DEGRADED" if status == "HEALTHY" else status
+            warnings.append(f"High average response time: {avg_response_time:.2f}s")
+        
+        if p95_response_time > 5.0:
+            status = "CRITICAL" if status != "CRITICAL" else status
+            issues.append(f"Critical: High p95 response time: {p95_response_time:.2f}s")
+        elif p95_response_time > 2.5:
+            status = "DEGRADED" if status == "HEALTHY" else status
+            warnings.append(f"High p95 response time: {p95_response_time:.2f}s")
+        
+        if weight_percentage > 95.0:
+            status = "CRITICAL" if status != "CRITICAL" else status
+            issues.append(f"Critical: Rate limit usage: {weight_percentage:.1f}%")
+        elif weight_percentage > 80.0:
+            status = "DEGRADED" if status == "HEALTHY" else status
+            warnings.append(f"High rate limit usage: {weight_percentage:.1f}%")
         
         return {
             "status": status,
             "issues": issues,
-            "metrics": metrics
+            "warnings": warnings,
+            "metrics": metrics,
+            "timestamp": time.time()
         }
     
-    def reset(self) -> None:
-        """Reset all metrics."""
-        async def _reset():
-            async with self.lock:
-                self.request_metrics = RequestMetrics()
-                self.rate_limit_metrics = RateLimitMetrics()
-                self.start_time = time.time()
+    async def reset(self) -> None:
+        """Reset all metrics asynchronously."""
+        async with self._async_lock:
+            self.request_metrics = RequestMetrics()
+            await self.reset_rate_limit()
+            self.start_time = time.time()
+            logger.info("🔄 Metrics reset completed")
+    
+    async def get_performance_summary(self) -> Dict[str, Any]:
+        """Get a comprehensive performance summary asynchronously."""
+        metrics = await self.get_metrics()
         
-        try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                asyncio.create_task(_reset())
-            else:
-                loop.run_until_complete(_reset())
-        except:
-            pass
+        return {
+            "performance_grade": self._calculate_performance_grade(metrics),
+            "recommendations": self._generate_recommendations(metrics),
+            "key_metrics": {
+                "success_rate": metrics["success_rate"],
+                "average_response_time": metrics["average_response_time"],
+                "p95_response_time": metrics["p95_response_time"],
+                "current_rpm": metrics["current_rpm"],
+                "weight_utilization": metrics["weight_percentage"]
+            },
+            "detailed_metrics": metrics
+        }
+    
+    def _calculate_performance_grade(self, metrics: Dict[str, Any]) -> str:
+        """Calculate a performance grade from A to F."""
+        success_rate = metrics.get("success_rate", 100.0)
+        avg_response_time = metrics.get("average_response_time", 0.0)
+        weight_percentage = metrics.get("weight_percentage", 0.0)
+        
+        score = 0
+        if success_rate >= 99.0: 
+            score += 2
+        elif success_rate >= 95.0: 
+            score += 1
+        
+        if avg_response_time <= 0.5: 
+            score += 2
+        elif avg_response_time <= 1.0: 
+            score += 1
+        
+        if weight_percentage <= 50.0: 
+            score += 1
+        
+        grades = {5: "A", 4: "B", 3: "C", 2: "D", 1: "E", 0: "F"}
+        return grades.get(score, "F")
+    
+    def _generate_recommendations(self, metrics: Dict[str, Any]) -> List[str]:
+        """Generate performance recommendations."""
+        recommendations = []
+        
+        success_rate = metrics.get("success_rate", 100.0)
+        avg_response_time = metrics.get("average_response_time", 0.0)
+        weight_percentage = metrics.get("weight_percentage", 0.0)
+        
+        if success_rate < 95.0:
+            recommendations.append("Investigate API failures and implement retry logic")
+        
+        if avg_response_time > 1.0:
+            recommendations.append("Optimize request batching and reduce API call frequency")
+        
+        if weight_percentage > 70.0:
+            recommendations.append("Monitor rate limits closely and consider distributing requests")
+        
+        if not recommendations:
+            recommendations.append("Performance is optimal. Continue current practices")
+        
+        return recommendations
 
+# Global metrics instance management
+class MetricsManager:
+    """Manager for global metrics instance."""
+    _instance: Optional[AdvancedMetrics] = None
+    _lock: Lock = Lock()
+    
+    @classmethod
+    def get_instance(cls) -> AdvancedMetrics:
+        """Get the global metrics instance."""
+        with cls._lock:
+            if cls._instance is None:
+                cls._instance = AdvancedMetrics()
+            return cls._instance
 
-# Singleton instance
-metrics = AdvancedMetrics()
+# Convenience async functions for global access
+async def record_request(success: bool, response_time: float, error_type: Optional[str] = None) -> None:
+    """Convenience function to record request metrics."""
+    metrics = MetricsManager.get_instance()
+    await metrics.record_request(success, response_time, error_type)
+
+async def record_rate_limit(weight_used: int = 1) -> None:
+    """Convenience function to record rate limit usage."""
+    metrics = MetricsManager.get_instance()
+    await metrics.record_rate_limit(weight_used)
+
+async def get_current_metrics() -> Dict[str, Any]:
+    """Convenience function to get current metrics."""
+    metrics = MetricsManager.get_instance()
+    return await metrics.get_metrics()
+
+async def get_health_status() -> Dict[str, Any]:
+    """Convenience function to get health status."""
+    metrics = MetricsManager.get_instance()
+    return await metrics.get_health_status()
+
+async def reset_metrics() -> None:
+    """Convenience function to reset metrics."""
+    metrics = MetricsManager.get_instance()
+    await metrics.reset()

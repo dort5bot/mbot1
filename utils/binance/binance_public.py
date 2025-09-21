@@ -23,6 +23,7 @@ from typing import Any, Dict, List, Optional, Union
 from .binance_request import BinanceHTTPClient  # expected: async _request(...)
 from .binance_circuit_breaker import CircuitBreaker  # expected: async execute(...)
 from .binance_exceptions import BinanceAPIError
+from .binance_types import Interval, Symbol
 
 LOG = logging.getLogger("binance_public")
 LOG.setLevel(logging.INFO)
@@ -31,37 +32,37 @@ LOG.setLevel(logging.INFO)
 class BinancePublicAPI:
     """
     Binance Public API işlemleri - Singleton.
-
-    Kullanım:
-        http_client = BinanceHTTPClient(...)  # projenizde tanımlı olmalı
-        cb = CircuitBreaker(...)
-        client = BinancePublicAPI(http_client, cb)
     """
 
     _instance: Optional["BinancePublicAPI"] = None
+    _initialized: bool = False
 
     def __new__(cls, http_client: BinanceHTTPClient, circuit_breaker: CircuitBreaker) -> "BinancePublicAPI":
         """
-        Singleton implementasyonu: Aynı http_client & circuit_breaker ile birden fazla
-        örnek oluşturulmasını engeller.
+        Singleton implementasyonu.
         """
         if cls._instance is None:
             cls._instance = super().__new__(cls)
-            LOG.debug("Creating new BinancePublicAPI singleton instance.")
+            cls._instance._initialize(http_client, circuit_breaker)
         return cls._instance
+
+    def _initialize(self, http_client: BinanceHTTPClient, circuit_breaker: CircuitBreaker) -> None:
+        """Internal initialization method."""
+        if not self._initialized:
+            self.http: BinanceHTTPClient = http_client
+            self.circuit_breaker: CircuitBreaker = circuit_breaker
+            self._initialized = True
+            logger.info("BinancePublicAPI initialized with provided http_client and circuit_breaker.")
 
     def __init__(self, http_client: BinanceHTTPClient, circuit_breaker: CircuitBreaker) -> None:
         """
         Args:
-            http_client: BinanceHTTPClient örneği (async _request methodu beklendi).
-            circuit_breaker: CircuitBreaker örneği (execute metodunu barındırmalı).
+            http_client: BinanceHTTPClient örneği
+            circuit_breaker: CircuitBreaker örneği
         """
-        # __init__ birden çok çağrıldığında yeniden atama yapılmaması için korunur.
-        if not hasattr(self, "http"):
-            self.http: BinanceHTTPClient = http_client
-            self.circuit_breaker: CircuitBreaker = circuit_breaker
-            LOG.info("BinancePublicAPI initialized with provided http_client and circuit_breaker.")
-
+        # Initialization is handled in __new__ and _initialize
+        pass
+        
     # -------------------------
     # Basic endpoints (mevcut)
     # -------------------------
@@ -81,7 +82,8 @@ class BinancePublicAPI:
         except Exception as e:
             LOG.exception("Error getting server time.")
             raise BinanceAPIError(f"Error getting server time: {e}")
-
+        pass
+        
     async def get_exchange_info(self) -> Dict[str, Any]:
         """
         Get exchange information.
@@ -98,7 +100,8 @@ class BinancePublicAPI:
         except Exception as e:
             LOG.exception("Error getting exchange info.")
             raise BinanceAPIError(f"Error getting exchange info: {e}")
-
+        pass
+        
     async def get_symbol_price(self, symbol: str) -> Dict[str, Any]:
         """
         Get current price for a symbol.
@@ -643,3 +646,4 @@ class BinancePublicAPI:
         except Exception as e:
             LOG.exception("Error checking if futures symbol exists: %s", symbol)
             raise BinanceAPIError(f"Error checking if futures symbol exists {symbol}: {e}")
+            

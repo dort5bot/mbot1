@@ -1,7 +1,8 @@
 """
+binance/binance_request.py
 HTTP client for Binance API requests.
 """
-
+# utils/binance/binance_request.py - GELİŞTİRİLMİŞ KOD
 import aiohttp
 import asyncio
 import time
@@ -15,7 +16,9 @@ from .binance_exceptions import (
     BinanceAPIError, BinanceRequestError, BinanceRateLimitError,
     BinanceAuthenticationError, BinanceTimeoutError
 )
-from .binance_metrics import metrics
+from .binance_metrics import MetricsManager
+metrics = MetricsManager.get_instance()
+
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +32,8 @@ class BinanceHTTPClient:
         self,
         api_key: Optional[str] = None,
         secret_key: Optional[str] = None,
+        base_url: Optional[str] = None,  # Yeni parametre
+        fapi_url: Optional[str] = None,  # Yeni parametre
         config: Optional[Dict[str, Any]] = None,
         session: Optional[aiohttp.ClientSession] = None
     ):
@@ -38,42 +43,54 @@ class BinanceHTTPClient:
         Args:
             api_key: Binance API key
             secret_key: Binance secret key
+            base_url: Spot API base URL (optional)
+            fapi_url: Futures API base URL (optional)
             config: Configuration dictionary
             session: Existing aiohttp session (optional)
         """
+        # APİ ayarla
         self.api_key = api_key
         self.secret_key = secret_key
-        self.config = {**DEFAULT_CONFIG, **(config or {})}
-        self._session = session or aiohttp.ClientSession(   # ✅ buraya eklendi
-            timeout=aiohttp.ClientTimeout(total=(config or DEFAULT_CONFIG)["timeout"]),
-            connector=aiohttp.TCPConnector(limit=100, limit_per_host=20)
-        )
-        self._last_request_time = 0
-        self._min_request_interval = 1.0 / 10  # 10 requests per second default
-        self._weight_used = 0
-        self._weight_reset_time = time.time() + 60  # Reset in 1 minute
         
-        logger.info("✅ BinanceHTTPClient initialized")
-    
-    async def close(self) -> None:
-        """Close HTTP session."""
-        if self._session and not self._session.closed:
-            await self._session.close()
-            logger.info("✅ BinanceHTTPClient session closed")
-
+        # Base URL'leri ayarla
+        self.base_url = base_url or BASE_URL
+        self.fapi_url = fapi_url or FUTURES_URL
+        
+        self.config = {**DEFAULT_CONFIG, **(config or {})}
+        
+        # Session management improved
+        self._session_provided_externally = session is not None
+        self._session = session
+        
+        self._last_request_time = 0
+        self._min_request_interval = 1.0 / self.config.get("requests_per_second", 10)
+        self._weight_used = 0
+        self._weight_reset_time = time.time() + 60
+        
+        logger.info(f"✅ BinanceHTTPClient initialized - Base URL: {self.base_url}, FAPI URL: {self.fapi_url}")
+                
     
     async def _get_session(self) -> aiohttp.ClientSession:
-        """Get or create aiohttp session."""
+        """Get or create aiohttp session with connection pooling."""
         if self._session is None or self._session.closed:
+            timeout = aiohttp.ClientTimeout(total=self.config["timeout"])
+            connector = aiohttp.TCPConnector(
+                limit=self.config.get("connector_limit", 100),
+                limit_per_host=self.config.get("connector_limit_per_host", 20),
+                enable_cleanup_closed=True
+            )
             self._session = aiohttp.ClientSession(
-                timeout=aiohttp.ClientTimeout(total=self.config["timeout"]),
-                connector=aiohttp.TCPConnector(limit=100, limit_per_host=20)
+                timeout=timeout,
+                connector=connector,
+                connector_owner=not self._session_provided_externally
             )
         return self._session
     
     async def close(self) -> None:
-        """Close HTTP session."""
-        if self._session and not self._session.closed:
+        """Close HTTP session if we own it."""
+        if (self._session and 
+            not self._session.closed and 
+            not self._session_provided_externally):
             await self._session.close()
             logger.info("✅ BinanceHTTPClient session closed")
     
@@ -119,7 +136,8 @@ class BinanceHTTPClient:
         time_since_last = current_time - self._last_request_time
         
         if time_since_last < self._min_request_interval:
-            await asyncio.sleep(self._min_request_interval - time_since_last)
+            sleep_time = self._min_request_interval - time_since_last
+            await asyncio.sleep(sleep_time)
         
         self._last_request_time = time.time()
     
@@ -177,9 +195,13 @@ class BinanceHTTPClient:
         params = params or {}
         
         # Prepare request
-        base_url = FUTURES_URL if futures else BASE_URL
+        # URL oluşturma kısmını güncelle
+        base_url = self.fapi_url if futures else self.base_url
         url = f"{base_url}{endpoint}"
-        headers = {'Content-Type': 'application/json'}
+        headers = {
+            'Content-Type': 'application/json',
+            'User-Agent': f'BinancePythonClient/1.0 (Python {platform.python_version()})'
+        }
         
         if signed:
             params['timestamp'] = int(time.time() * 1000)
@@ -190,6 +212,7 @@ class BinanceHTTPClient:
         headers = self._add_auth_headers(headers)
         
         # Make request with retries
+        last_exception = None
         for attempt in range(retries + 1):
             try:
                 await self._rate_limit()
@@ -201,7 +224,8 @@ class BinanceHTTPClient:
                     method=method,
                     url=url,
                     params=params if method == 'GET' else None,
-                    data=params if method != 'GET' else None,
+                    json=params if method != 'GET' and not signed else None,
+                    data=urllib.parse.urlencode(params) if method != 'GET' and signed else None,
                     headers=headers
                 ) as response:
                     response_time = time.time() - start_time
@@ -222,26 +246,32 @@ class BinanceHTTPClient:
             except asyncio.TimeoutError:
                 error_msg = f"Request timeout after {self.config['timeout']}s"
                 await metrics.record_request(False, self.config['timeout'], "timeout")
+                last_exception = BinanceTimeoutError(error_msg)
                 if attempt == retries:
-                    raise BinanceTimeoutError(error_msg)
+                    raise last_exception
                 
             except aiohttp.ClientError as e:
                 error_msg = f"HTTP client error: {str(e)}"
                 await metrics.record_request(False, 0, "connection_error")
+                last_exception = BinanceRequestError(error_msg)
                 if attempt == retries:
-                    raise BinanceRequestError(error_msg)
+                    raise last_exception
             
             except Exception as e:
                 error_msg = f"Unexpected error: {str(e)}"
                 await metrics.record_request(False, 0, "unexpected_error")
+                last_exception = BinanceRequestError(error_msg)
                 if attempt == retries:
-                    raise BinanceRequestError(error_msg)
+                    raise last_exception
             
             # Exponential backoff for retries
             if attempt < retries:
                 delay = self.config["retry_delay"] * (2 ** attempt)
                 logger.warning(f"Retry {attempt + 1}/{retries} after {delay}s delay")
                 await asyncio.sleep(delay)
+        
+        # This should never be reached, but for type safety
+        raise last_exception or BinanceRequestError("Unknown request error")
     
     async def _handle_error(self, status_code: int, error_data: str, response_time: float) -> None:
         """
@@ -253,9 +283,7 @@ class BinanceHTTPClient:
             response_time: Response time in seconds
         """
         try:
-            error_json = await asyncio.get_event_loop().run_in_executor(
-                None, lambda: eval(error_data) if error_data else {}
-            )
+            error_json = json.loads(error_data) if error_data else {}
             error_code = error_json.get('code', -1)
             error_msg = error_json.get('msg', 'Unknown error')
             
@@ -270,7 +298,7 @@ class BinanceHTTPClient:
             else:
                 raise BinanceRequestError(f"HTTP {status_code}: {error_msg}")
                 
-        except (ValueError, SyntaxError):
+        except (ValueError, json.JSONDecodeError):
             await metrics.record_request(False, response_time, "invalid_response")
             raise BinanceRequestError(f"HTTP {status_code}: Invalid response: {error_data}")
     
@@ -330,3 +358,9 @@ class BinanceHTTPClient:
             return True
         except Exception:
             return False
+
+    async def __aenter__(self):
+        return self
+    
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        await self.close()
