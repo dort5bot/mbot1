@@ -740,29 +740,13 @@ async def get_or_create_binance_api(
     api_secret: Optional[str] = None,
     cache_ttl: int = 30,
     cache_max_size: Optional[int] = 1000,
-    base_url: Optional[str] = None,
-    fapi_url: Optional[str] = None,
+    base_url: Optional[str] = None,        # Bu parametreleri ekle
+    fapi_url: Optional[str] = None,        # Bu parametreleri ekle 
     failure_threshold: int = 5,
     reset_timeout: int = 30
 ) -> BinanceAPI:
     """
     Get or create global BinanceAPI instance with thread-safe initialization.
-    
-    Args:
-        api_key: Binance API key
-        api_secret: Binance API secret
-        cache_ttl: Cache TTL in seconds
-        cache_max_size: Maximum cache entries
-        base_url: Base API URL
-        fapi_url: Futures API URL
-        failure_threshold: Circuit breaker failure threshold
-        reset_timeout: Circuit breaker reset timeout
-    
-    Returns:
-        BinanceAPI instance
-    
-    Raises:
-        RuntimeError: If initialization fails
     """
     global _binance_api_instance
     
@@ -772,12 +756,12 @@ async def get_or_create_binance_api(
                 from .binance_request import BinanceHTTPClient
                 from .binance_circuit_breaker import CircuitBreaker
                 
-                # Create HTTP client
+                # Create HTTP client with ALL parameters
                 http_client = BinanceHTTPClient(
                     api_key=api_key,
                     secret_key=api_secret,
-                    base_url=base_url,
-                    fapi_url=fapi_url
+                    base_url=base_url,          # Bu satırı ekle
+                    fapi_url=fapi_url           # Bu satırı ekle
                 )
                 
                 # Create circuit breaker
