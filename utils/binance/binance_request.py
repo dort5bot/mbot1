@@ -35,7 +35,7 @@ class BinanceHTTPClient:
         #base_url: Optional[str] = None,  # Yeni parametre
         #fapi_url: Optional[str] = None,  # Yeni parametre
         base_url: str = "https://api.binance.com",
-        fapi_url: str = "https://fapi.binance.com"
+        fapi_url: str = "https://fapi.binance.com",
         
         config: Optional[Dict[str, Any]] = None,
         session: Optional[aiohttp.ClientSession] = None
