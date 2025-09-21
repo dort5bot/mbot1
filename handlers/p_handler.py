@@ -49,12 +49,13 @@ async def get_binance() -> Any:
         try:
             config = await get_config()
             
+            # Tüm parametreleri doğru şekilde iletiyoruz
             _binance_instance = await get_or_create_binance_api(
                 api_key=config.BINANCE_API_KEY,
                 api_secret=config.BINANCE_API_SECRET,
                 cache_ttl=30,
-                base_url=config.BINANCE_BASE_URL,
-                fapi_url=config.BINANCE_FAPI_URL,
+                base_url=config.BINANCE_BASE_URL,          # Bu satırı ekle
+                fapi_url=config.BINANCE_FAPI_URL,          # Bu satırı ekle
                 failure_threshold=config.CIRCUIT_BREAKER_FAILURE_THRESHOLD,
                 reset_timeout=config.CIRCUIT_BREAKER_RESET_TIMEOUT
             )
@@ -431,8 +432,3 @@ async def p_fallback_handler(message: Message):
         f"{EMOJI_WARNING} Geçersiz komut. "
         f"Kullanım: /p_help"
     )
-
-async def register_p_handler(main_router: Router):
-    """Ana router'a bu router'ı ekler."""
-    main_router.include_router(router)
-    logger.info("✅ P handler registered successfully")
