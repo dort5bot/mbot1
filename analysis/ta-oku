@@ -36,6 +36,7 @@ analysis/
 
 			
 analysis_a.py 
+Skor hesaplama & model birleşimi & 	alt analizlerin sonuçlarıyla  karma skor üretme, trade sinyali çıkarma
 * tek referans noktası → handler sadece burayı çağırır
 * sadece agregasyon ve skor birleştirme olsun, analiz fonksiyonlarını buraya koyma
 * A'dan F'ye kadar olan modülleri çalıştırır ve 
@@ -48,22 +49,13 @@ Sonuç: 0.75 * 0.6 = 0.45 (Orta güçte bir AL sinyali. Pozisyon büyüklüğün
 (handlerde) * gnosis_signal sonucu pozisyon boyutu ve yönü ayarlamak için threshold’lar belirleyebilirsin:
 0.7 → Full AL, 	,	0.4-0.7 → Orta AL (%60 pozisyon), <0.4 → Bekle / no trade
 
+analysis_a.py.py içinde her modülün skorunu loglayan detaylı bir verbose / debug modu olmalı.
+analysis_a.py.py tarafından üretilen skorların cache’lenmesi (ör. bir dakika boyunca) sistem yükünü azaltabilir.
+onchain.py modülünün veriye ulaşamama ihtimaline karşı, fallback stratejisi düşünülmeli (ör. skor = 0.0).
+
+
 “Gnosis” (bilgi) kelimesinden gelir.
 Anlam: “Bilgi puanı” ya da “içgörü puanı”
-
-
-========
-Modül	Grup -> İçerik : Amaç → İçerik → Amaç		
-A. tremo.py	A. Trend & Momentum (TA) -> EMA, RSI, MACD, Bollinger, ATR : Klasik teknik yön tayini → EMA, RSI, MACD, Bollinger, ATR → Klasik teknik yön tayini	EMA, RSI, MACD, Bollinger, ATR	Klasik teknik yön tayini
-B. regime.py	B. Piyasa Rejimi -> Volatilite (σ), Entropy, Trend/Range tespiti (Hurst, Regime Switching) : Piyasanın modunu anlamak → Volatilite (σ), Entropy, Trend/Range tespiti (Hurst, Regime Switching) → Piyasanın modunu anlamak	Volatilite (σ), Entropy, Trend/Range tespiti (Hurst, Regime Switching)	Piyasanın modunu anlamak
-C. derivs.py	C. Derivatives & Sentiment -> Funding rate, OI, Long/Short ratio, Liquidation heatmap : Trader’ların positioning davranışı → Funding rate, OI, Long/Short ratio, Liquidation heatmap → Trader’ların positioning davranışı	Funding rate, OI, Long/Short ratio, Liquidation heatmap	Trader’ların positioning davranışı
-D. orderflow.py	D. Order Flow & Microstructure -> Orderbook imbalance, Spread, Market buy/sell pressure : Anlık likidite ve yön → Orderbook imbalance, Spread, Market buy/sell pressure → Anlık likidite ve yön	Orderbook imbalance, Spread, Market buy/sell pressure	Anlık likidite ve yön
-E. causality.py	E. Korelasyon & Lead-Lag -> BTC → ETH → Altlar, Granger test, Beta exposure : Lider coinlerden yön almak → BTC → ETH → Altlar, Granger test, Beta exposure → Lider coinlerden yön almak	BTC → ETH → Altlar, Granger test, Beta exposure	Lider coinlerden yön almak
-F. onchain.py	F. On-Chain & Makro (opsiyonel ileri aşama) -> Stablecoin flow, CEX inflow/outflow, ETF net flow : Ekstra büyük resim verisi → Stablecoin flow, CEX inflow/outflow, ETF net flow → Ekstra büyük resim verisi	Stablecoin flow, CEX inflow/outflow, ETF net flow	Ekstra büyük resim verisi
-G. risk.py	G. risk.py: KORUMA. Diğer 6 modülün ürettiği sinyalin ne kadarına maruz kalınacağını belirler. Risk ölçümü (ATR Stop) ve riskli bölgelerden kaçınma (Liquidation Proximity) burada.		
-analysis_a.py.py	Final → A-F skorlarının normalize edilmiş ağırlıklı birleşimi → Market Direction Score	A-F skorlarının normalize edilmiş ağırlıklı birleşimi	Market Direction Score
-
-
 
 ====
 temel metrikler
@@ -89,9 +81,20 @@ F. onchain.py→ + → MVRV Z-Score, SOPR, ETF Flows
 G. risk.py→ + → Correlation Risk, Maximum Drawdown
 
 
-analysis_a.py.py içinde her modülün skorunu loglayan detaylı bir verbose / debug modu olmalı.
-analysis_a.py.py tarafından üretilen skorların cache’lenmesi (ör. bir dakika boyunca) sistem yükünü azaltabilir.
-onchain.py modülünün veriye ulaşamama ihtimaline karşı, fallback stratejisi düşünülmeli (ör. skor = 0.0).
+=birleşik=
+========
+Modül	Grup -> İçerik : Amaç → İçerik → Amaç		
+A. tremo.py	A. Trend & Momentum (TA) -> EMA, RSI, MACD, Bollinger, ATR : Klasik teknik yön tayini → EMA, RSI, MACD, Bollinger, ATR → Klasik teknik yön tayini	EMA, RSI, MACD, Bollinger, ATR	Klasik teknik yön tayini
+B. regime.py	B. Piyasa Rejimi -> Volatilite (σ), Entropy, Trend/Range tespiti (Hurst, Regime Switching) : Piyasanın modunu anlamak → Volatilite (σ), Entropy, Trend/Range tespiti (Hurst, Regime Switching) → Piyasanın modunu anlamak	Volatilite (σ), Entropy, Trend/Range tespiti (Hurst, Regime Switching)	Piyasanın modunu anlamak
+C. derivs.py	C. Derivatives & Sentiment -> Funding rate, OI, Long/Short ratio, Liquidation heatmap : Trader’ların positioning davranışı → Funding rate, OI, Long/Short ratio, Liquidation heatmap → Trader’ların positioning davranışı	Funding rate, OI, Long/Short ratio, Liquidation heatmap	Trader’ların positioning davranışı
+D. orderflow.py	D. Order Flow & Microstructure -> Orderbook imbalance, Spread, Market buy/sell pressure : Anlık likidite ve yön → Orderbook imbalance, Spread, Market buy/sell pressure → Anlık likidite ve yön	Orderbook imbalance, Spread, Market buy/sell pressure	Anlık likidite ve yön
+E. causality.py	E. Korelasyon & Lead-Lag -> BTC → ETH → Altlar, Granger test, Beta exposure : Lider coinlerden yön almak → BTC → ETH → Altlar, Granger test, Beta exposure → Lider coinlerden yön almak	BTC → ETH → Altlar, Granger test, Beta exposure	Lider coinlerden yön almak
+F. onchain.py	F. On-Chain & Makro (opsiyonel ileri aşama) -> Stablecoin flow, CEX inflow/outflow, ETF net flow : Ekstra büyük resim verisi → Stablecoin flow, CEX inflow/outflow, ETF net flow → Ekstra büyük resim verisi	Stablecoin flow, CEX inflow/outflow, ETF net flow	Ekstra büyük resim verisi
+G. risk.py	G. risk.py: KORUMA. Diğer 6 modülün ürettiği sinyalin ne kadarına maruz kalınacağını belirler. Risk ölçümü (ATR Stop) ve riskli bölgelerden kaçınma (Liquidation Proximity) burada.		
+analysis_a.py.py	Final → A-F skorlarının normalize edilmiş ağırlıklı birleşimi → Market Direction Score	A-F skorlarının normalize edilmiş ağırlıklı birleşimi	Market Direction Score
+
+
+==
 
 
 not: monte_carlo.py
@@ -100,3 +103,15 @@ Extreme senaryoları analiz eder ("black swan" event'ları)
 Karar almada yardımcı olur
 Risk yönetimi sağlar
 
+Market analizi için gerçekten anlamlı private endpointler:
+
+Spot/Futures account balances & positions → borsada açık pozisyonlarını görmek için
+Futures funding rate → piyasa yönü ve sentiment analizi için
+Open orders & order history → kendi trade davranışını analiz etmek için
+Margin account info → kaldıraçlı pozisyon analizi için
+Staking history → locked coin arzını görebilmek (dolaylı etki olabilir)
+  (endpoit eklenmedi) Savings, Earn, Mining Pool → daha çok kullanıcı portföy/gelir yönetimi, market trend analizine doğrudan katkısı yok.
+
+👉 
+Binance’in private API’si sadece senin hesabına özel verileri gösterir.
+Genel piyasa için → public API verileri (orderbook, open interest, funding, liquidation) çok daha anlamlıdır.
