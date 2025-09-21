@@ -38,10 +38,10 @@ class BotConfig:
     
     # Webhook settings
     USE_WEBHOOK: bool = field(default_factory=lambda: os.getenv("USE_WEBHOOK", "false").lower() == "true")
-    WEBHOOK_HOST: str = field(default_factory=lambda: os.getenv("WEBHOOK_HOST", "")) #url adresi orn:https://abc2.onrender.com
+    WEBHOOK_HOST: str = field(default_factory=lambda: os.getenv("WEBHOOK_HOST", ""))
     WEBHOOK_SECRET: str = field(default_factory=lambda: os.getenv("WEBHOOK_SECRET", ""))
     WEBAPP_HOST: str = field(default_factory=lambda: os.getenv("WEBAPP_HOST", "0.0.0.0"))
-    WEBAPP_PORT: int = field(default_factory=lambda: int(os.getenv("PORT", "3000")))  # Render PORT variable
+    WEBAPP_PORT: int = field(default_factory=lambda: int(os.getenv("PORT", "3000")))
     
     # Aiogram specific settings
     AIOGRAM_REDIS_HOST: str = field(default_factory=lambda: os.getenv("AIOGRAM_REDIS_HOST", "localhost"))
@@ -68,9 +68,12 @@ class BotConfig:
     LOG_LEVEL: str = field(default_factory=lambda: os.getenv("LOG_LEVEL", "INFO"))
     
     # Rate limiting
-    REQUEST_TIMEOUT: int = field(default_factory=lambda: int(os.getenv("REQUEST_TIMEOUT", "30")))
-    MAX_REQUESTS_PER_MINUTE: int = field(default_factory=lambda: int(os.getenv("MAX_REQUESTS_PER_MINUTE", "1200")))
-    
+    # Devre kesici ayarları
+    CIRCUIT_BREAKER_FAILURE_THRESHOLD: int = field(default_factory=lambda: int(os.getenv("FAILURE_THRESHOLD", "5")))
+    CIRCUIT_BREAKER_RESET_TIMEOUT: int = field(default_factory=lambda: int(os.getenv("RESET_TIMEOUT", "30")))
+    CIRCUIT_BREAKER_HALF_OPEN_TIMEOUT: int = field(default_factory=lambda: int(os.getenv("HALF_OPEN_TIMEOUT", "15")))
+
+
     # Database settings
     DATABASE_URL: str = field(default_factory=lambda: os.getenv("DATABASE_URL", ""))
     USE_DATABASE: bool = field(default_factory=lambda: os.getenv("USE_DATABASE", "false").lower() == "true")
@@ -78,6 +81,33 @@ class BotConfig:
     # Cache settings
     CACHE_TTL: int = field(default_factory=lambda: int(os.getenv("CACHE_TTL", "300")))
     MAX_CACHE_SIZE: int = field(default_factory=lambda: int(os.getenv("MAX_CACHE_SIZE", "1000")))
+
+    
+    # ========================
+    # ANALYSIS CONFIGURATION
+    # ========================
+    ANALYSIS_CACHE_TTL: int = field(default_factory=lambda: int(os.getenv("ANALYSIS_CACHE_TTL", "60")))
+    SIGNAL_THRESHOLDS: Dict[str, float] = field(default_factory=lambda: {
+        "strong_bull": 0.7,
+        "bull": 0.3, 
+        "bear": -0.3,
+        "strong_bear": -0.7
+    })
+
+    # MODULE WEIGHTS (aggregator için)
+    MODULE_WEIGHTS: Dict[str, float] = field(default_factory=lambda: {
+        "causality": 0.15,
+        "derivs": 0.15,
+        "onchain": 0.15,
+        "orderflow": 0.15,
+        "regime": 0.15,
+        "risk": 0.15,
+        "tremo": 0.10
+    })
+
+    # RISK MANAGEMENT
+    MAX_POSITION_SIZE: float = field(default_factory=lambda: float(os.getenv("MAX_POSITION_SIZE", "0.1")))
+    DEFAULT_LEVERAGE: int = field(default_factory=lambda: int(os.getenv("DEFAULT_LEVERAGE", "3")))
 
     # ========================
     # 📊 TRADING SETTINGS
@@ -129,8 +159,6 @@ class BotConfig:
         if self.USE_WEBHOOK:
             if not self.WEBHOOK_HOST:
                 errors.append("❌ WEBHOOK_HOST gereklidir (USE_WEBHOOK=true)")
-            if not self.WEBHOOK_PATH:
-                errors.append("❌ WEBHOOK_PATH gereklidir (USE_WEBHOOK=true)")
         
         # Binance validation (eğer trading enabled ise)
         if self.ENABLE_TRADING:
@@ -167,11 +195,8 @@ class BotConfig:
         return result
 
 
-async def get_config() -> BotConfig:
-    """Global config instance'ını döndürür.
-    
-    Aiogram 3.x ile uyumlu async singleton pattern.
-    """
+def get_config_sync() -> BotConfig:
+    """Sync config instance'ını döndürür."""
     global _CONFIG_INSTANCE
     if _CONFIG_INSTANCE is None:
         _CONFIG_INSTANCE = BotConfig.load()
@@ -181,27 +206,26 @@ async def get_config() -> BotConfig:
     return _CONFIG_INSTANCE
 
 
-# Sync fonksiyonlar global instance'dan çekiyor
+async def get_config() -> BotConfig:
+    """Global config instance'ını döndürür (async wrapper)."""
+    return get_config_sync()
+
+
 def get_telegram_token() -> str:
     """Aiogram için Telegram bot token'ını döndürür."""
-    if _CONFIG_INSTANCE is None:
-        raise RuntimeError("Config henüz yüklenmemiş. Lütfen önce get_config() çağırın.")
-    return _CONFIG_INSTANCE.TELEGRAM_TOKEN
+    config = get_config_sync()
+    return config.TELEGRAM_TOKEN
 
 
 def get_admins() -> List[int]:
     """Admin kullanıcı ID'lerini döndürür."""
-    if _CONFIG_INSTANCE is None:
-        raise RuntimeError("Config henüz yüklenmemiş. Lütfen önce get_config() çağırın.")
-    return _CONFIG_INSTANCE.ADMIN_IDS
+    config = get_config_sync()
+    return config.ADMIN_IDS
 
 
 def get_webhook_config() -> Dict[str, Any]:
     """Webhook konfigürasyonu döndürür."""
-    if _CONFIG_INSTANCE is None:
-        raise RuntimeError("Config henüz yüklenmemiş. Lütfen önce get_config() çağırın.")
-    
-    config = _CONFIG_INSTANCE
+    config = get_config_sync()
     return {
         "path": config.WEBHOOK_PATH,
         "url": config.WEBHOOK_URL,
@@ -211,16 +235,11 @@ def get_webhook_config() -> Dict[str, Any]:
     }
 
 
-# Redis configuration for Aiogram
 def get_redis_config() -> Dict[str, Any]:
     """Aiogram için Redis konfigürasyonu döndürür."""
-    if _CONFIG_INSTANCE is None:
-        raise RuntimeError("Config henüz yüklenmemiş. Lütfen önce get_config() çağırın.")
-    
-    config = _CONFIG_INSTANCE
+    config = get_config_sync()
     return {
         "host": config.AIOGRAM_REDIS_HOST,
         "port": config.AIOGRAM_REDIS_PORT,
         "db": config.AIOGRAM_REDIS_DB,
     }
-

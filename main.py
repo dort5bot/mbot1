@@ -9,6 +9,10 @@ Aiogram 3.x + Router pattern + Webhook + Render uyumlu.
 - Local polling desteği eklendi
 free tier platformlarla tam uyumludur.
 + (Webhook path now uses /webhook/<BOT_TOKEN> format)
+📌 
+2. Bot token sızma riski → Maskeleme iyileştirmesi
+/webhook/{token} GET endpoint'inde token'ın sadece ilk ve son birkaç karakteri gösteriliyor. Ancak bir yerde log’lanması hâlinde bu risk olabilir.
+🛡️ Öneri: Token'ı direkt olarak hiçbir response içine koymamak daha güvenlidir, ya da sadece sabit "***********" göstermek.
 """
 
 import os
@@ -239,11 +243,24 @@ async def lifespan():
             )
             
             binance_api = BinanceAPI(http_client, circuit_breaker)
+            
+            # Binance API'yi bot instance'ına da ekle (handler'lar için)
+            bot.data["binance_api"] = binance_api
+            
             DIContainer.register('binance_api', binance_api)
             logger.info("✅ Binance API initialized (trading enabled)")
         else:
             binance_api = None
             logger.info("ℹ️ Binance API not initialized (trading disabled)")
+        
+        # Load handlers
+        try:
+            load_results = await load_handlers(dispatcher)
+            if load_results.get("failed", 0) > 0:
+                logger.warning(f"⚠️ {load_results['failed']} handlers failed to load")
+            logger.info(f"✅ {load_results.get('loaded', 0)} handlers loaded successfully")
+        except Exception as e:
+            logger.error(f"❌ Handler loading failed: {e}")
         
         # Start polling if webhook is not configured (local development)
         if not app_config.USE_WEBHOOK:
@@ -345,25 +362,12 @@ async def version_info(request: web.Request) -> web.Response:
 # ---------------------------------------------------------------------
 # Webhook Setup Functions
 # ---------------------------------------------------------------------
-# main.py'de on_startup fonksiyonunu güncelleyin
 async def on_startup(bot: Bot) -> None:
     """Execute on application startup."""
-    global app_config, dispatcher
+    global app_config
     
     try:
-        # Clear handler cache and load handlers - BURASI DÜZELTİLMELİ
-        await clear_handler_cache()
-        
-        # Handler'ları senkron olarak yükle
-        load_results = await load_handlers(dispatcher)
-        
-        if load_results.get("failed", 0) > 0:
-            logger.warning(f"⚠️ {load_results['failed']} handlers failed to load")
-        
-        # Mevcut webhook ayarları...
-        
         # Set webhook if webhook is configured
-        # New behavior: always set webhook to <WEBHOOK_HOST>/webhook/<BOT_TOKEN>
         if app_config.USE_WEBHOOK and app_config.WEBHOOK_HOST:
             # Ensure WEBHOOK_HOST doesn't end with slash
             host = app_config.WEBHOOK_HOST.rstrip("/")
@@ -435,7 +439,6 @@ async def create_app() -> web.Application:
         app.router.add_get("/version", version_info)
         
         # Configure webhook handler using path /webhook/{token}
-        # This ensures the server endpoint matches the Telegram-set URL: https://your-host/webhook/<BOT_TOKEN>
         if app_config.USE_WEBHOOK and app_config.WEBHOOK_HOST:
             webhook_handler = SimpleRequestHandler(
                 dispatcher=dispatcher,
@@ -443,11 +446,9 @@ async def create_app() -> web.Application:
                 secret_token=getattr(app_config, "WEBHOOK_SECRET", None) or None
             )
             
-            # Always use /webhook/{token} pattern (no extra prefix)
+            # Use /webhook/{token} pattern
             webhook_route = "/webhook/{token}"
-            
-            # POST endpoint for Telegram updates
-            app.router.add_post(webhook_route, webhook_handler)
+            webhook_handler.register(app, path=webhook_route)
             
             # GET endpoint for basic info/test (verifies token)
             async def webhook_info(request: web.Request):
@@ -457,7 +458,7 @@ async def create_app() -> web.Application:
                 if token == valid_token:
                     return web.json_response({
                         "status": "active",
-                        "bot_token": f"{token[:10]}...{token[-6:]}",
+                        "bot_token": "***********",  # Token gizlendi
                         "method": "POST",
                         "message": "Webhook is active. Use POST method for Telegram updates."
                     })
@@ -468,10 +469,9 @@ async def create_app() -> web.Application:
                     }, status=400)
             
             app.router.add_get(webhook_route, webhook_info)
-            logger.info(f"📨 Webhook endpoint configured: {webhook_route} (expects /webhook/<BOT_TOKEN>)")
+            logger.info(f"📨 Webhook endpoint configured: {webhook_route}")
         
         # Setup startup/shutdown hooks
-        # Use lambdas that call our async functions with bot instance
         app.on_startup.append(lambda app: on_startup(bot))
         app.on_shutdown.append(lambda app: on_shutdown(bot))
         
@@ -556,56 +556,90 @@ async def get_system_info() -> Dict[str, Any]:
 # Main Entry Point
 # ---------------------------------------------------------------------
 async def main() -> None:
-    """Main application entry point."""
-    global app_config, runner
-    
+    global app_config, runner, bot, dispatcher
+
     try:
-        # Load configuration
+        # Config yükle
         app_config = await get_config()
-        
-        # Platform detection
-        platform = "Render" if "RENDER" in os.environ else "Local"
-        logger.info(f"🏗️ Platform detected: {platform}")
+
+        logger.info(f"🏗️ Platform detected: {'Render' if 'RENDER' in os.environ else 'Local'}")
         logger.info(f"🌐 Environment: {'production' if not app_config.DEBUG else 'development'}")
         logger.info(f"🚪 Port: {app_config.WEBAPP_PORT}")
         logger.info(f"🏠 Host: {app_config.WEBAPP_HOST}")
         logger.info(f"🤖 Trading enabled: {app_config.ENABLE_TRADING}")
         logger.info(f"🌐 Webhook mode: {'enabled' if app_config.USE_WEBHOOK else 'disabled (polling)'}")
-        
-        # Create and run application
-        app = await create_app()
-        
-        # Only start web server if webhook is configured
-        if app_config.USE_WEBHOOK:
+
+        if not app_config.USE_WEBHOOK:
+            # ✅ POLLING MODU
+
+            # Bot ve Dispatcher oluştur
+            bot = Bot(
+                token=get_telegram_token(),
+                default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+            )
+            dispatcher = Dispatcher()
+
+            # Middleware ve handler'ları yükle
+            dispatcher.update.outer_middleware(LoggingMiddleware())
+            dispatcher.update.outer_middleware(AuthenticationMiddleware())
+            dispatcher.errors.register(error_handler)
+
+            # Binance API'yi bot instance'ına ekle (handler'lar için)
+            if app_config.ENABLE_TRADING:
+                http_client = BinanceHTTPClient(
+                    api_key=app_config.BINANCE_API_KEY,
+                    secret_key=app_config.BINANCE_API_SECRET,
+                    base_url=app_config.BINANCE_BASE_URL,
+                    timeout=app_config.REQUEST_TIMEOUT
+                )
+                
+                circuit_breaker = CircuitBreaker(
+                    failure_threshold=3,
+                    recovery_timeout=60,
+                    half_open_attempts=2
+                )
+                
+                binance_api = BinanceAPI(http_client, circuit_breaker)
+                bot.data["binance_api"] = binance_api
+                logger.info("✅ Binance API initialized and added to bot.data")
+
+            await load_handlers(dispatcher)
+
+            logger.info("✅ Handler ve middleware yüklendi")
+
+            # Webhook sil
+            await bot.delete_webhook(drop_pending_updates=True)
+            logger.info("✅ Webhook silindi")
+
+            # Polling başlat
+            logger.info("🤖 Bot polling modunda başlatılıyor...")
+            await dispatcher.start_polling(bot)
+
+        else:
+            # ✅ WEBHOOK MODU
+            app = await create_app()
             runner = web.AppRunner(app)
             await runner.setup()
             site = web.TCPSite(runner, host=app_config.WEBAPP_HOST, port=app_config.WEBAPP_PORT)
             await site.start()
-            
-            logger.info(f"✅ Server started successfully on port {app_config.WEBAPP_PORT}")
+
+            logger.info(f"✅ Server started on port {app_config.WEBAPP_PORT}")
             logger.info(f"📊 Health check: http://{app_config.WEBAPP_HOST}:{app_config.WEBAPP_PORT}/health")
-        else:
-            logger.info("✅ Polling mode active, web server not started")
-        
-        logger.info("🤖 Bot is now running...")
-        
-        # Wait for shutdown signal
-        await shutdown_event.wait()
-        logger.info("👋 Shutdown signal received, exiting...")
-        
-    except KeyboardInterrupt:
-        logger.info("🛑 Application stopped by user")
+
+            await shutdown_event.wait()
+            logger.info("👋 Shutdown signal received, exiting...")
+
     except Exception as e:
-        logger.error(f"🚨 Critical error: {e}")
+        logger.error(f"🚨 Critical error in main(): {e}")
         raise
     finally:
-        # Ensure proper cleanup
-        try:
-            if runner:
-                await runner.cleanup()
-            logger.info("✅ Application cleanup completed")
-        except Exception as e:
-            logger.error(f"❌ Cleanup error: {e}")
+        # Cleanup
+        if runner:
+            await runner.cleanup()
+        if bot and hasattr(bot, 'session'):
+            await bot.session.close()
+        logger.info("✅ Application cleanup completed")
+
 
 if __name__ == "__main__":
     # Run the application
@@ -616,5 +650,3 @@ if __name__ == "__main__":
     except Exception as e:
         logger.critical(f"💥 Fatal error: {e}")
         exit(1)
-
-
