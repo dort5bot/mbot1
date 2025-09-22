@@ -34,7 +34,7 @@ from aiogram.filters import BaseFilter
 from aiogram.types import ErrorEvent
 
 from utils.handler_loader import load_handlers, clear_handler_cache
-from utils.binance.binance_a import BinanceAPI
+from utils.binance.binance_a import get_or_create_binance_api  # ✅ DÜZELTME: Factory fonksiyonunu import et
 from utils.binance.binance_request import BinanceHTTPClient
 from utils.binance.binance_circuit_breaker import CircuitBreaker
 from config import BotConfig, get_config, get_telegram_token, get_admins
@@ -55,7 +55,7 @@ logger = logging.getLogger(__name__)
 # Global instances
 bot: Optional[Bot] = None
 dispatcher: Optional[Dispatcher] = None
-binance_api: Optional[BinanceAPI] = None
+binance_api: Optional[Any] = None  # ✅ DÜZELTME: Specific type yerine Any
 app_config: Optional[BotConfig] = None
 runner: Optional[web.AppRunner] = None
 polling_task: Optional[asyncio.Task] = None
@@ -192,6 +192,80 @@ async def start_polling() -> None:
         logger.error(f"❌ Polling failed: {e}")
 
 # ---------------------------------------------------------------------
+# Binance API Initialization Function
+# ---------------------------------------------------------------------
+async def initialize_binance_api() -> Optional[Any]:
+    """
+    Initialize Binance API with proper factory pattern.
+    
+    Returns:
+        BinanceAPI instance or None if trading disabled
+        
+    Raises:
+        Exception: If initialization fails
+    """
+    global app_config
+    
+    if not app_config.ENABLE_TRADING:
+        logger.info("ℹ️ Binance API not initialized (trading disabled)")
+        return None
+    
+    try:
+        logger.info("🔄 Initializing Binance API...")
+        
+        # ✅ DÜZELTME: Factory fonksiyonunu kullan
+        binance_api_instance = await get_or_create_binance_api(
+            api_key=app_config.BINANCE_API_KEY,
+            api_secret=app_config.BINANCE_API_SECRET,
+            base_url=app_config.BINANCE_BASE_URL,
+            fapi_url=app_config.BINANCE_FAPI_URL,
+            cache_ttl=30,
+            failure_threshold=getattr(app_config, 'CIRCUIT_BREAKER_FAILURE_THRESHOLD', 5),
+            reset_timeout=getattr(app_config, 'CIRCUIT_BREAKER_RESET_TIMEOUT', 30)
+        )
+        
+        logger.info("✅ Binance API initialized successfully")
+        return binance_api_instance
+        
+    except Exception as e:
+        logger.error(f"❌ Binance API initialization failed: {e}")
+        raise
+
+# ---------------------------------------------------------------------
+# Handler Loading with Debug Information
+# ---------------------------------------------------------------------
+async def initialize_handlers(dispatcher_instance: Dispatcher) -> Dict[str, int]:
+    """
+    Initialize handlers with comprehensive logging.
+    
+    Args:
+        dispatcher_instance: Dispatcher instance to load handlers into
+        
+    Returns:
+        Loading statistics
+    """
+    try:
+        load_results = await load_handlers(dispatcher_instance)
+        
+        # ✅ DÜZELTME: Detaylı debug bilgisi
+        logger.info(f"📊 Handler yükleme sonuçları: {load_results}")
+        
+        # Hangi handler'ların yüklendiğini logla
+        if dispatcher_instance and hasattr(dispatcher_instance, 'sub_routers'):
+            router_names = [getattr(router, 'name', 'unnamed') for router in dispatcher_instance.sub_routers]
+            logger.info(f"📋 Yüklenen router'lar: {router_names}")
+        
+        if load_results.get("failed", 0) > 0:
+            logger.warning(f"⚠️ {load_results['failed']} handlers failed to load")
+        
+        logger.info(f"✅ {load_results.get('loaded', 0)} handlers loaded successfully")
+        return load_results
+        
+    except Exception as e:
+        logger.error(f"❌ Handler loading failed: {e}")
+        return {"loaded": 0, "failed": 1}
+
+# ---------------------------------------------------------------------
 # Lifespan Management (Async Context Manager)
 # ---------------------------------------------------------------------
 @asynccontextmanager
@@ -228,39 +302,15 @@ async def lifespan():
         DIContainer.register('config', app_config)
         
         # Initialize Binance API (only if trading is enabled)
-        if app_config.ENABLE_TRADING:
-            http_client = BinanceHTTPClient(
-                api_key=app_config.BINANCE_API_KEY,
-                secret_key=app_config.BINANCE_API_SECRET,
-                base_url=app_config.BINANCE_BASE_URL,
-                timeout=app_config.REQUEST_TIMEOUT
-            )
-            
-            circuit_breaker = CircuitBreaker(
-                failure_threshold=3,  # Default value
-                recovery_timeout=60,  # Default value
-                half_open_attempts=2
-            )
-            
-            binance_api = BinanceAPI(http_client, circuit_breaker)
-            
+        binance_api = await initialize_binance_api()
+        
+        if binance_api:
             # Binance API'yi bot instance'ına da ekle (handler'lar için)
             bot.data["binance_api"] = binance_api
-            
             DIContainer.register('binance_api', binance_api)
-            logger.info("✅ Binance API initialized (trading enabled)")
-        else:
-            binance_api = None
-            logger.info("ℹ️ Binance API not initialized (trading disabled)")
         
-        # Load handlers
-        try:
-            load_results = await load_handlers(dispatcher)
-            if load_results.get("failed", 0) > 0:
-                logger.warning(f"⚠️ {load_results['failed']} handlers failed to load")
-            logger.info(f"✅ {load_results.get('loaded', 0)} handlers loaded successfully")
-        except Exception as e:
-            logger.error(f"❌ Handler loading failed: {e}")
+        # Load handlers with debug information
+        await initialize_handlers(dispatcher)
         
         # Start polling if webhook is not configured (local development)
         if not app_config.USE_WEBHOOK:
@@ -553,6 +603,51 @@ async def get_system_info() -> Dict[str, Any]:
     }
 
 # ---------------------------------------------------------------------
+# Polling Mode Initialization
+# ---------------------------------------------------------------------
+async def initialize_polling_mode() -> None:
+    """Initialize and start polling mode."""
+    global bot, dispatcher, binance_api, app_config
+    
+    try:
+        # Bot ve Dispatcher oluştur
+        bot = Bot(
+            token=get_telegram_token(),
+            default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+        )
+        dispatcher = Dispatcher()
+
+        # Middleware ve handler'ları yükle
+        dispatcher.update.outer_middleware(LoggingMiddleware())
+        dispatcher.update.outer_middleware(AuthenticationMiddleware())
+        dispatcher.errors.register(error_handler)
+
+        # Binance API'yi initialize et
+        binance_api = await initialize_binance_api()
+        
+        if binance_api:
+            # Binance API'yi bot instance'ına ekle (handler'lar için)
+            bot.data["binance_api"] = binance_api
+            logger.info("✅ Binance API initialized and added to bot.data")
+
+        # Handler'ları yükle (debug bilgisi ile)
+        await initialize_handlers(dispatcher)
+
+        logger.info("✅ Handler ve middleware yüklendi")
+
+        # Webhook sil
+        await bot.delete_webhook(drop_pending_updates=True)
+        logger.info("✅ Webhook silindi")
+
+        # Polling başlat
+        logger.info("🤖 Bot polling modunda başlatılıyor...")
+        await dispatcher.start_polling(bot)
+
+    except Exception as e:
+        logger.error(f"❌ Polling mode initialization failed: {e}")
+        raise
+
+# ---------------------------------------------------------------------
 # Main Entry Point
 # ---------------------------------------------------------------------
 async def main() -> None:
@@ -571,50 +666,7 @@ async def main() -> None:
 
         if not app_config.USE_WEBHOOK:
             # ✅ POLLING MODU
-
-            # Bot ve Dispatcher oluştur
-            bot = Bot(
-                token=get_telegram_token(),
-                default=DefaultBotProperties(parse_mode=ParseMode.HTML),
-            )
-            dispatcher = Dispatcher()
-
-            # Middleware ve handler'ları yükle
-            dispatcher.update.outer_middleware(LoggingMiddleware())
-            dispatcher.update.outer_middleware(AuthenticationMiddleware())
-            dispatcher.errors.register(error_handler)
-
-            # Binance API'yi bot instance'ına ekle (handler'lar için)
-            if app_config.ENABLE_TRADING:
-                http_client = BinanceHTTPClient(
-                    api_key=app_config.BINANCE_API_KEY,
-                    secret_key=app_config.BINANCE_API_SECRET,
-                    base_url=app_config.BINANCE_BASE_URL,
-                    timeout=app_config.REQUEST_TIMEOUT
-                )
-                
-                circuit_breaker = CircuitBreaker(
-                    failure_threshold=3,
-                    recovery_timeout=60,
-                    half_open_attempts=2
-                )
-                
-                binance_api = BinanceAPI(http_client, circuit_breaker)
-                bot.data["binance_api"] = binance_api
-                logger.info("✅ Binance API initialized and added to bot.data")
-
-            await load_handlers(dispatcher)
-
-            logger.info("✅ Handler ve middleware yüklendi")
-
-            # Webhook sil
-            await bot.delete_webhook(drop_pending_updates=True)
-            logger.info("✅ Webhook silindi")
-
-            # Polling başlat
-            logger.info("🤖 Bot polling modunda başlatılıyor...")
-            await dispatcher.start_polling(bot)
-
+            await initialize_polling_mode()
         else:
             # ✅ WEBHOOK MODU
             app = await create_app()
