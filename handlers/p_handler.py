@@ -1,119 +1,173 @@
-# handlers/p_handler.py
+"""
+p_handler.py
+------------
+Binance API üzerinden coin verilerini sorgulayan handler.
+Komutlar:
+- /p [symbols...] → Seçilen coinlerin veya config SCAN_SYMBOLS listesinin fiyatlarını gösterir
+- /pg [limit]     → En çok yükselen coinleri listeler
+- /pl [limit]     → En çok düşen coinleri listeler
+- /test_api       → Binance API bağlantı testi yapar
+Rapor formatı (coin adı, değişim %, hacim, fiyat )
+"""
+
 import logging
 from aiogram import Router
 from aiogram.types import Message
 from aiogram.filters import Command
-from typing import List, Dict, Any
+from typing import List, Optional
 
-from utils.binance.binance_a import get_or_create_binance_api
-from bot.config import Config  # config.py'den import
+from utils.binance.binance_a import get_binance_api
+from config import get_config
 
 logger = logging.getLogger(__name__)
+
 router = Router()
 
-# Yardımcı fonksiyon: sayıyı formatla
-def format_number(value: float, precision: int = 2) -> str:
-    if value >= 1_000_000_000:
-        return f"${value/1_000_000_000:.2f}B"
-    elif value >= 1_000_000:
-        return f"${value/1_000_000:.2f}M"
-    elif value >= 1_000:
-        return f"${value/1_000:.2f}K"
-    return f"${value:.{precision}f}"
+# ---------------------------------------------------------------------
+# Helper functions
+# ---------------------------------------------------------------------
+async def fetch_with_retry(func, *args, retries: int = 3, **kwargs):
+    """Binance API çağrısını retry ile sarmalar."""
+    last_exc = None
+    for attempt in range(1, retries + 1):
+        try:
+            return await func(*args, **kwargs)
+        except Exception as e:
+            last_exc = e
+            logger.warning(f"⚠️ API çağrısı başarısız (attempt {attempt}/{retries}): {e}")
+    logger.error(f"❌ API çağrısı {retries} denemeden sonra başarısız: {last_exc}")
+    raise last_exc
 
-# Yardımcı fonksiyon: coin listesini tabloya çevir
-def format_report(title: str, data: List[Dict[str, Any]]) -> str:
+
+def format_number(num: float, precision: int = 2) -> str:
+    """Sayısal değerleri okunabilir hale getirir."""
+    if num >= 1_000_000_000:
+        return f"${num/1_000_000_000:.2f}B"
+    elif num >= 1_000_000:
+        return f"${num/1_000_000:.2f}M"
+    elif num >= 1_000:
+        return f"${num/1_000:.2f}K"
+    else:
+        return f"${num:.{precision}f}"
+
+
+def format_report(title: str, tickers: List[dict]) -> str:
+    """Ticker listesini rapor formatına çevirir."""
     lines = [f"📈 {title}", "⚡Coin | Değişim | Hacim | Fiyat"]
-    for idx, t in enumerate(data, 1):
-        symbol = t.get("symbol", "N/A").replace("USDT", "")
+    for i, t in enumerate(tickers, 1):
+        sym = t.get("symbol", "N/A")
         change = float(t.get("priceChangePercent", 0))
-        volume = float(t.get("quoteVolume", 0))
-        price = float(t.get("lastPrice", t.get("price", 0)))
+        vol = float(t.get("quoteVolume", 0))
+        price = float(t.get("lastPrice", 0))
         lines.append(
-            f"{idx}. {symbol}: {change:+.2f}% | {format_number(volume)} | {price:.4f}"
+            f"{i}. {sym}: {change:+.2f}% | {format_number(vol)} | {price:.4f}"
         )
     return "\n".join(lines)
 
-# /p komutu → özel coinler veya SCAN_SYMBOLS
+
+# ---------------------------------------------------------------------
+# /p komutu
+# ---------------------------------------------------------------------
 @router.message(Command("p"))
-async def cmd_p(message: Message, config: Config):
+async def cmd_p(message: Message) -> None:
+    """
+    /p [symbols...] → SCAN_SYMBOLS veya belirtilen coinleri listeler.
+    """
     try:
-        args = message.text.strip().split()[1:]
+        args = message.text.split()[1:]
+        api = await get_binance_api()
+
         if args:
-            symbols = [s.upper() + "USDT" if not s.upper().endswith("USDT") else s.upper() for s in args]
+            # Kullanıcının yazdığı coinler
+            symbols = [s.upper() if s.upper().endswith("USDT") else f"{s.upper()}USDT" for s in args]
+            tickers = await fetch_with_retry(api.get_custom_symbols_data, symbols)
+            title = "Seçili Coinler"
         else:
-            symbols = config.SCAN_SYMBOLS  # config'ten al
+            # Config SCAN_SYMBOLS
+            config = await get_config()
+            symbols = config.SCAN_SYMBOLS
+            tickers = await fetch_with_retry(api.get_custom_symbols_data, symbols)
+            # Hacme göre sırala
+            tickers.sort(key=lambda x: float(x.get("quoteVolume", 0)), reverse=True)
+            title = "SCAN_SYMBOLS (Hacme Göre)"
 
-        api = await get_or_create_binance_api()
-        data = await api.get_custom_symbols_data(symbols)
-
-        if not data:
-            await message.answer("❌ Veri bulunamadı.")
+        if not tickers:
+            await message.answer("❌ Veri bulunamadı")
             return
 
-        text = format_report("Seçili Coinler" if args else "SCAN_SYMBOLS (Hacme Göre)", data)
-        await message.answer(text)
-    except Exception as e:
-        logger.error(f"/p komutu hatası: {e}", exc_info=True)
-        await message.answer("❌ Komut çalıştırılırken hata oluştu.")
+        report = format_report(title, tickers)
+        await message.answer(report)
 
-# /pg komutu → en çok yükselenler
+    except Exception as e:
+        logger.error(f"❌ /p komutunda hata: {e}")
+        await message.answer("❌ Veri alınamadı, lütfen tekrar deneyin.")
+
+
+# ---------------------------------------------------------------------
+# /pg komutu (top gainers)
+# ---------------------------------------------------------------------
 @router.message(Command("pg"))
-async def cmd_pg(message: Message):
+async def cmd_pg(message: Message) -> None:
+    """
+    /pg [limit] → En çok yükselen coinleri listeler.
+    """
     try:
-        args = message.text.strip().split()[1:]
+        args = message.text.split()[1:]
         limit = int(args[0]) if args else 20
+        api = await get_binance_api()
 
-        api = await get_or_create_binance_api()
-        data = await api.get_top_gainers_with_volume(limit=limit)
-
-        if not data:
-            await message.answer("❌ Veri bulunamadı.")
+        tickers = await fetch_with_retry(api.get_top_gainers_with_volume, limit)
+        if not tickers:
+            await message.answer("❌ Yükselen coin bulunamadı")
             return
 
-        text = format_report(f"En Çok Yükselenler (Top {limit})", data)
-        await message.answer(text)
-    except Exception as e:
-        logger.error(f"/pg komutu hatası: {e}", exc_info=True)
-        await message.answer("❌ Komut çalıştırılırken hata oluştu.")
+        report = format_report(f"En Çok Yükselen İlk {limit}", tickers)
+        await message.answer(report)
 
-# /pl komutu → en çok düşenler
+    except Exception as e:
+        logger.error(f"❌ /pg komutunda hata: {e}")
+        await message.answer("❌ Veri alınamadı.")
+
+
+# ---------------------------------------------------------------------
+# /pl komutu (top losers)
+# ---------------------------------------------------------------------
 @router.message(Command("pl"))
-async def cmd_pl(message: Message):
+async def cmd_pl(message: Message) -> None:
+    """
+    /pl [limit] → En çok düşen coinleri listeler.
+    """
     try:
-        args = message.text.strip().split()[1:]
+        args = message.text.split()[1:]
         limit = int(args[0]) if args else 20
+        api = await get_binance_api()
 
-        api = await get_or_create_binance_api()
-        data = await api.get_top_losers_with_volume(limit=limit)
-
-        if not data:
-            await message.answer("❌ Veri bulunamadı.")
+        tickers = await fetch_with_retry(api.get_top_losers_with_volume, limit)
+        if not tickers:
+            await message.answer("❌ Düşen coin bulunamadı")
             return
 
-        text = format_report(f"En Çok Düşenler (Top {limit})", data)
-        await message.answer(text)
-    except Exception as e:
-        logger.error(f"/pl komutu hatası: {e}", exc_info=True)
-        await message.answer("❌ Komut çalıştırılırken hata oluştu.")
+        report = format_report(f"En Çok Düşen İlk {limit}", tickers)
+        await message.answer(report)
 
-# /test_api komutu → Binance API bağlantı testi
+    except Exception as e:
+        logger.error(f"❌ /pl komutunda hata: {e}")
+        await message.answer("❌ Veri alınamadı.")
+
+
+# ---------------------------------------------------------------------
+# /test_api komutu
+# ---------------------------------------------------------------------
 @router.message(Command("test_api"))
-async def cmd_test_api(message: Message):
+async def cmd_test_api(message: Message) -> None:
+    """
+    /test_api → Binance API bağlantı testi yapar.
+    """
     try:
-        api = await get_or_create_binance_api()
-        health = await api.system_health_check()
-
-        text = (
-            "✅ Binance API Testi\n"
-            f"📡 Ping: {health['ping']}\n"
-            f"🔑 API Keys: {health['api_keys_valid']}\n"
-            f"🕒 Server Time: {health['server_time']}\n"
-            f"🚦 Circuit Breaker: {health['circuit_breaker_state']}\n"
-            f"📊 Cache Stats: {health['cache_stats']}\n"
-            f"⚙️ System Status: {health['system_status']}"
-        )
-        await message.answer(text)
+        api = await get_binance_api()
+        ping = await fetch_with_retry(api.ping)
+        server_time = await fetch_with_retry(api.get_server_time)
+        await message.answer(f"✅ Binance API çalışıyor.\nPing: {ping}\nServer Time: {server_time}")
     except Exception as e:
-        logger.error(f"/test_api komutu hatası: {e}", exc_info=True)
-        await message.answer("❌ Binance API testi başarısız oldu.")
+        logger.error(f"❌ /test_api komutunda hata: {e}")
+        await message.answer(f"❌ Binance API bağlantısı başarısız: {e}")
