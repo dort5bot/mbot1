@@ -18,7 +18,7 @@ from aiogram.filters import Command
 from aiogram.utils.markdown import code
 
 from config import get_config
-from utils.binance.binance_api import get_or_create_binance_api
+from utils.binance.binance_a import get_or_create_binance_a
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +50,7 @@ async def get_binance() -> Any:
             config = await get_config()
             
             # Tüm parametreleri doğru şekilde iletiyoruz
-            _binance_instance = await get_or_create_binance_api(
+            _binance_instance = await get_or_create_binance_a(
                 api_key=config.BINANCE_API_KEY,
                 api_secret=config.BINANCE_API_SECRET,
                 cache_ttl=30,
