@@ -1,3 +1,4 @@
+#Final-1:cache temizleme>Python cache'leri temizleniyor+
 # Build aşaması
 FROM python:3.11-slim AS builder
 
@@ -23,7 +24,6 @@ RUN pip wheel --no-cache-dir --wheel-dir /app/wheels -r requirements.txt
 # requirements.txt'yi de wheels klasörüne kopyala
 RUN cp requirements.txt /app/wheels/
 
-
 # Runtime aşaması
 FROM python:3.11-slim AS runtime
 
@@ -47,12 +47,26 @@ ENV PYTHONUNBUFFERED=1 \
 # Wheel'ları ve requirements.txt'yi kopyala
 COPY --from=builder /app/wheels /wheels
 
-# Wheel'lardan paketleri kur
+# Wheel'lardan paketleri kur + CACHE TEMİZLEME
 RUN pip install --no-index --find-links=/wheels -r /wheels/requirements.txt \
-    && rm -rf /wheels
+    && rm -rf /wheels \
+    && find /usr/local -depth \
+      \( \
+        \( -type d -name __pycache__ \) \
+        -o \( -type f -name '*.pyc' \) \
+        -o \( -type f -name '*.pyo' \) \
+      \) -exec rm -rf {} +
 
 # Uygulama kodunu kopyala
 COPY --chown=appuser:appgroup . .
+
+# Uygulama kodundaki cache'leri temizle
+RUN find . -depth \
+      \( \
+        \( -type d -name __pycache__ \) \
+        -o \( -type f -name '*.pyc' \) \
+        -o \( -type f -name '*.pyo' \) \
+      \) -exec rm -rf {} +
 
 # Health check ve port ayarları
 EXPOSE 3000
