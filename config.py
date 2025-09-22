@@ -22,6 +22,46 @@ _CONFIG_INSTANCE: Optional["BotConfig"] = None
 
 
 @dataclass
+class OnChainConfig:
+    GLASSNODE_API_KEY: str = field(default_factory=lambda: os.getenv("GLASSNODE_API_KEY", "your_glassnode_api_key_here"))
+    METRIC_WEIGHTS: Dict[str, float] = field(default_factory=lambda: {
+        "stablecoin_supply_ratio": 0.3,
+        "exchange_net_flow": 0.3,
+        "etf_flows": 0.2,
+        "fear_greed_index": 0.2
+    })
+    SSR_THRESHOLDS: Dict[str, float] = field(default_factory=lambda: {
+        "bearish": 20.0,
+        "bullish": 5.0,
+        "neutral": 10.0
+    })
+    NETFLOW_THRESHOLDS: Dict[str, float] = field(default_factory=lambda: {
+        "bearish": 1000,
+        "bullish": -1000
+    })
+    ETF_THRESHOLDS: Dict[str, float] = field(default_factory=lambda: {
+        "max_flow": 50000000
+    })
+    API_TIMEOUTS: Dict[str, int] = field(default_factory=lambda: {
+        "glassnode": 30,
+        "fear_greed": 10,
+        "binance": 15
+    })
+    CACHE_TTL: Dict[str, int] = field(default_factory=lambda: {
+        "ssr": 3600,
+        "netflow": 1800,
+        "etf_flows": 3600,
+        "fear_greed": 3600
+    })
+    FALLBACK_VALUES: Dict[str, float] = field(default_factory=lambda: {
+        "ssr": 0.0,
+        "netflow": 0.0,
+        "etf_flows": 0.0,
+        "fear_greed": 0.0
+    })
+
+
+@dataclass
 class BotConfig:
     """Aiogram 3.x uyumlu bot yapılandırma sınıfı."""
     
@@ -73,6 +113,8 @@ class BotConfig:
     CIRCUIT_BREAKER_RESET_TIMEOUT: int = field(default_factory=lambda: int(os.getenv("RESET_TIMEOUT", "30")))
     CIRCUIT_BREAKER_HALF_OPEN_TIMEOUT: int = field(default_factory=lambda: int(os.getenv("HALF_OPEN_TIMEOUT", "15")))
 
+    # On-chain analiz için alt config nesnesi (asıl dosya üstte)
+    ONCHAIN: OnChainConfig = field(default_factory=OnChainConfig)
 
     # Database settings
     DATABASE_URL: str = field(default_factory=lambda: os.getenv("DATABASE_URL", ""))
@@ -193,6 +235,10 @@ class BotConfig:
         result["WEBHOOK_URL"] = self.WEBHOOK_URL
         
         return result
+
+
+
+
 
 
 def get_config_sync() -> BotConfig:
