@@ -6,6 +6,7 @@ Binance ve Aiogram için yapılandırma sınıfı. Default değerler ile gelir,
 
 import os
 import logging
+import sys
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Any
 from dotenv import load_dotenv
@@ -62,6 +63,48 @@ class OnChainConfig:
 
 
 @dataclass
+class AnalysisConfig:
+    """Analiz modülü konfigürasyonu"""
+    # Cache ayarları
+    ANALYSIS_CACHE_TTL: int = field(default_factory=lambda: int(os.getenv("ANALYSIS_CACHE_TTL", "60")))
+    MAX_CACHE_SIZE: int = field(default_factory=lambda: int(os.getenv("MAX_CACHE_SIZE", "1000")))
+    
+    # Skor threshold'ları
+    SIGNAL_THRESHOLDS: Dict[str, float] = field(default_factory=lambda: {
+        "strong_bull": 0.7,
+        "bull": 0.3, 
+        "bear": -0.3,
+        "strong_bear": -0.7
+    })
+    
+    # Modül ağırlıkları
+    MODULE_WEIGHTS: Dict[str, float] = field(default_factory=lambda: {
+        "tremo": 0.20,
+        "regime": 0.18,
+        "derivs": 0.16,
+        "causality": 0.14,
+        "orderflow": 0.12,
+        "onchain": 0.10,
+        "risk": 0.10
+    })
+    
+    # Timeout ayarları
+    MODULE_TIMEOUTS: Dict[str, int] = field(default_factory=lambda: {
+        "causality": 30,
+        "derivs": 25,
+        "onchain": 40,
+        "orderflow": 20,
+        "regime": 35,
+        "tremo": 30,
+        "risk": 25
+    })
+    
+    # Risk yönetimi
+    MIN_CONFIDENCE: float = field(default_factory=lambda: float(os.getenv("MIN_CONFIDENCE", "0.3")))
+    MAX_POSITION_SIZE: float = field(default_factory=lambda: float(os.getenv("MAX_POSITION_SIZE", "0.1")))
+
+
+@dataclass
 class BotConfig:
     """Aiogram 3.x uyumlu bot yapılandırma sınıfı."""
     
@@ -113,9 +156,12 @@ class BotConfig:
     CIRCUIT_BREAKER_RESET_TIMEOUT: int = field(default_factory=lambda: int(os.getenv("RESET_TIMEOUT", "30")))
     CIRCUIT_BREAKER_HALF_OPEN_TIMEOUT: int = field(default_factory=lambda: int(os.getenv("HALF_OPEN_TIMEOUT", "15")))
 
-    # On-chain analiz için alt config nesnesi (asıl dosya üstte)
+    # On-chain analiz için alt config nesnesi
     ONCHAIN: OnChainConfig = field(default_factory=OnChainConfig)
 
+    # Analiz için alt config nesnesi
+    ANALYSIS: AnalysisConfig = field(default_factory=AnalysisConfig)
+    
     # Database settings
     DATABASE_URL: str = field(default_factory=lambda: os.getenv("DATABASE_URL", ""))
     USE_DATABASE: bool = field(default_factory=lambda: os.getenv("USE_DATABASE", "false").lower() == "true")
@@ -124,32 +170,16 @@ class BotConfig:
     CACHE_TTL: int = field(default_factory=lambda: int(os.getenv("CACHE_TTL", "300")))
     MAX_CACHE_SIZE: int = field(default_factory=lambda: int(os.getenv("MAX_CACHE_SIZE", "1000")))
 
-    
-    # ========================
-    # ANALYSIS CONFIGURATION
-    # ========================
-    ANALYSIS_CACHE_TTL: int = field(default_factory=lambda: int(os.getenv("ANALYSIS_CACHE_TTL", "60")))
-    SIGNAL_THRESHOLDS: Dict[str, float] = field(default_factory=lambda: {
-        "strong_bull": 0.7,
-        "bull": 0.3, 
-        "bear": -0.3,
-        "strong_bear": -0.7
-    })
-
-    # MODULE WEIGHTS (aggregator için)
-    MODULE_WEIGHTS: Dict[str, float] = field(default_factory=lambda: {
-        "causality": 0.15,
-        "derivs": 0.15,
-        "onchain": 0.15,
-        "orderflow": 0.15,
-        "regime": 0.15,
-        "risk": 0.15,
-        "tremo": 0.10
-    })
-
-    # RISK MANAGEMENT
-    MAX_POSITION_SIZE: float = field(default_factory=lambda: float(os.getenv("MAX_POSITION_SIZE", "0.1")))
-    DEFAULT_LEVERAGE: int = field(default_factory=lambda: int(os.getenv("DEFAULT_LEVERAGE", "3")))
+    # Analytics specific settings
+    CAUSALITY_WINDOW: int = field(default_factory=lambda: int(os.getenv("CAUSALITY_WINDOW", "100")))
+    CAUSALITY_MAXLAG: int = field(default_factory=lambda: int(os.getenv("CAUSALITY_MAXLAG", "2")))
+    CAUSALITY_CACHE_TTL: int = field(default_factory=lambda: int(os.getenv("CAUSALITY_CACHE_TTL", "10")))
+    CAUSALITY_TOP_ALTCOINS: List[str] = field(default_factory=lambda: [
+        symbol.strip() for symbol in os.getenv(
+            "CAUSALITY_TOP_ALTCOINS", 
+            "BNBUSDT,ADAUSDT,SOLUSDT,XRPUSDT,DOTUSDT"
+        ).split(",") if symbol.strip()
+    ])
 
     # ========================
     # 📊 TRADING SETTINGS
@@ -182,6 +212,9 @@ class BotConfig:
 
     @property
     def WEBHOOK_URL(self) -> str:
+        """Webhook URL'ini döndürür. Sadece USE_WEBHOOK=True ise anlamlı değer üretir."""
+        if not self.USE_WEBHOOK or not self.WEBHOOK_HOST:
+            return ""
         return f"{self.WEBHOOK_HOST.rstrip('/')}{self.WEBHOOK_PATH}"
 
     @classmethod
@@ -190,7 +223,7 @@ class BotConfig:
         return cls()
 
     def validate(self) -> bool:
-        """Config değerlerini doğrular."""
+        """Config değerlerini doğrular. Hata durumunda kontrollü çıkış yapar."""
         errors = []
         
         # Telegram bot validation
@@ -210,7 +243,8 @@ class BotConfig:
                 errors.append("❌ BINANCE_API_SECRET gereklidir (trading enabled)")
         
         if errors:
-            raise ValueError("\n".join(errors))
+            logger.critical("Config validation hatası:\n%s", "\n".join(errors))
+            sys.exit(1)
         
         return True
 
@@ -218,14 +252,18 @@ class BotConfig:
         """Kullanıcının admin olup olmadığını kontrol eder."""
         return user_id in self.ADMIN_IDS
 
-    def to_dict(self) -> Dict[str, Any]:
-        """Config'i dict olarak döndürür (debug/log amaçlı)."""
+    def to_dict(self, include_sensitive: bool = False) -> Dict[str, Any]:
+        """Config'i dict olarak döndürür (debug/log amaçlı).
+        
+        Args:
+            include_sensitive: Hassas bilgileri gösterilsin mi? (default: False)
+        """
         sensitive_fields = {"TELEGRAM_TOKEN", "BINANCE_API_KEY", "BINANCE_API_SECRET", "WEBHOOK_SECRET"}
         result = {}
         
         for field_name in self.__dataclass_fields__:
             value = getattr(self, field_name)
-            if field_name in sensitive_fields and value:
+            if field_name in sensitive_fields and value and not include_sensitive:
                 result[field_name] = "***HIDDEN***"
             else:
                 result[field_name] = value
@@ -236,9 +274,17 @@ class BotConfig:
         
         return result
 
+    def to_safe_dict(self) -> Dict[str, Any]:
+        """Güvenli config dict'i (hassas bilgiler olmadan)."""
+        return self.to_dict(include_sensitive=False)
 
 
-
+def reload_config() -> BotConfig:
+    """Config'i yeniden yükler ve cache'i temizler."""
+    global _CONFIG_INSTANCE
+    _CONFIG_INSTANCE = None
+    logger.info("🔄 Config cache temizlendi, yeniden yükleniyor...")
+    return get_config_sync()
 
 
 def get_config_sync() -> BotConfig:
@@ -248,7 +294,11 @@ def get_config_sync() -> BotConfig:
         _CONFIG_INSTANCE = BotConfig.load()
         _CONFIG_INSTANCE.validate()
         logger.info("✅ Bot config yüklendi ve doğrulandı")
-        logger.debug(f"Config: {_CONFIG_INSTANCE.to_dict()}")
+        
+        # Debug log'da sadece güvenli bilgileri göster
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(f"Config (güvenli): {_CONFIG_INSTANCE.to_safe_dict()}")
+    
     return _CONFIG_INSTANCE
 
 
@@ -278,6 +328,7 @@ def get_webhook_config() -> Dict[str, Any]:
         "secret_token": config.WEBHOOK_SECRET,
         "host": config.WEBAPP_HOST,
         "port": config.WEBAPP_PORT,
+        "enabled": config.USE_WEBHOOK,
     }
 
 
