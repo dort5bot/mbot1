@@ -40,8 +40,8 @@ venv/
 logs/
 
 # Docker
-Dockerfile
-.dockerignore
+#Dockerfile
+#.dockerignore
 docker-compose.yml
 docker-compose.*.yml
 
