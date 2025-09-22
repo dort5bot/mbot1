@@ -10,6 +10,8 @@ __pycache__
 *.egg-info
 dist
 build
+.eggs
+.cache
 
 # Virtual environments
 env/
@@ -51,5 +53,5 @@ Thumbs.db
 tmp/
 temp/
 
-# Specific to your project
-# Buraya projenize özel ignore edilecek dosyaları ekleyin
+# Cleanup script (opsiyonel)
+cleanup.sh
