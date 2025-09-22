@@ -1,4 +1,4 @@
-name: 🐳 Docker Build & Deploy
+name: 🐳 Docker Build & Deploy    #Final-1: temizlik eklendi
 
 on:
   push:
@@ -22,9 +22,50 @@ env:
   ORACLE_USER: ${{ secrets.ORACLE_USER }}
 
 jobs:
-  docker-build:
+  pre-cleanup:
     runs-on: ubuntu-latest
-    timeout-minutes: 60   # <- 60 dakika olarak örnek, ihtiyacına göre90DAKİKA
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Pre-build cleanup
+        run: |
+          echo "🧹 Pre-build manual cleanup started..."
+          
+          # Docker sistem temizliği
+          docker system prune -f || true
+          docker builder prune -f || true
+          docker buildx prune -f || true
+          docker volume prune -f || true
+          
+          # Disk temizliği
+          sudo rm -rf /tmp/* || true
+          sudo apt-get clean || true
+          
+          # GitHub Actions cache temizliği (manuel)
+          sudo apt-get update && sudo apt-get install -y jq gh
+          echo "${{ secrets.GITHUB_TOKEN }}" | gh auth login --with-token || true
+
+          #
+          # 3 günden eski cache'leri temizle (daha agresif) + Her build öncesi temizlik + 
+          #
+          CACHE_LIST=$(gh api repos/${{ github.repository }}/actions/caches 2>/dev/null | jq -r '.actions_caches[] | select(.last_accessed_at < "'$(date -d '3 days ago' -u +"%Y-%m-%dT%H:%M:%SZ")'") | .id' 2>/dev/null) || true
+          
+          if [ -n "$CACHE_LIST" ]; then
+            for cache_id in $CACHE_LIST; do
+              echo "🗑️ Deleting cache: $cache_id"
+              gh api repos/${{ github.repository }}/actions/caches/$cache_id -X DELETE || true
+            done
+            echo "✅ Pre-build cache cleanup completed"
+          else
+            echo "✅ No old caches to clean up before build"
+          fi
+
+  docker-build:
+    needs: pre-cleanup
+    runs-on: ubuntu-latest
+    timeout-minutes: 15  #15 dakika sonra temizlik
     permissions:
       contents: read
       packages: write
@@ -69,36 +110,62 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Clean Docker Build Cache
+      - name: Comprehensive post-build cleanup
+        if: always()
         run: |
-          echo "🧹 Cleaning Docker build cache..."
-          docker builder prune -f
-          docker buildx prune -f
-          docker system prune -f --filter "until=1h"     ##1 saatten eski dosyaları temizler
+          echo "🧹 Comprehensive post-build cleanup..."
+          
+          # Docker kapsamlı temizlik
+          docker system prune -a -f --volumes || true
+          docker builder prune -a -f || true
+          docker buildx prune -a -f || true
+          docker image prune -a -f || true
+          docker container prune -f || true
+          docker volume prune -f || true
+          docker network prune -f || true
+          
+          # Disk temizliği
+          sudo rm -rf /var/lib/apt/lists/* || true
+          sudo rm -rf /tmp/* || true
+          sudo apt-get autoremove -y || true
+          sudo apt-get clean || true
+          
+          echo "✅ Post-build cleanup completed"
 
-      - name: Cleanup GitHub Actions cache
+      - name: Aggressive GitHub Actions cache cleanup
         if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
         run: |
-          echo "🧹 Cleaning up old GitHub Actions caches..."
+          echo "🧹 Aggressive GitHub Actions cache cleanup..."
           sudo apt-get update && sudo apt-get install -y jq gh
           echo "${{ secrets.GITHUB_TOKEN }}" | gh auth login --with-token
+          
+          # Tüm cache'leri listeleyip 1 günden eski olanları sil (çok agresif)
           CACHE_LIST=$(gh api repos/${{ github.repository }}/actions/caches \
-            | jq -r '.actions_caches[] | select(.last_accessed_at < "'$(date -d '30 days ago' -u +"%Y-%m-%dT%H:%M:%SZ")'") | .id')
+            | jq -r '.actions_caches[] | select(.last_accessed_at < "'$(date -d '1 day ago' -u +"%Y-%m-%dT%H:%M:%SZ")'") | .id')
+          
           if [ -n "$CACHE_LIST" ]; then
+            echo "🗑️ Deleting old caches:"
             for cache_id in $CACHE_LIST; do
+              echo "Deleting cache ID: $cache_id"
               gh api repos/${{ github.repository }}/actions/caches/$cache_id -X DELETE || true
             done
-            echo "✅ Cache cleanup completed"
+            echo "✅ Aggressive cache cleanup completed"
           else
-            echo "✅ No old caches to clean up"
+            echo "✅ No caches to clean up aggressively"
           fi
 
   deploy:
     needs: docker-build
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
-    timeout-minutes: 40   # <- Deploy için örnek 40 dakika
+    timeout-minutes: 40
     steps:
+      - name: Pre-deploy cleanup
+        run: |
+          echo "🧹 Pre-deploy manual cleanup..."
+          docker system prune -f || true
+          docker image prune -f || true
+
       - name: Check deployment triggers
         run: |
           echo "📦 Image built successfully: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}"
@@ -128,11 +195,18 @@ jobs:
           chmod 600 ~/.ssh/deploy_key
           ssh-keyscan -H "${{ env.ORACLE_HOST }}" >> ~/.ssh/known_hosts
 
-          #hiç kullanılmayan eski tag’siz image, durdurulan container, kullanılmayan custom network’leri temizler.
-          ssh -i ~/.ssh/deploy_key $USER@${{ env.ORACLE_HOST }} << EOF
+          # Kapsamlı temizlik ve deploy
+          ssh -i ~/.ssh/deploy_key $USER@${{ env.ORACLE_HOST }} << 'EOF'
             DOCKER_REGISTRY="${{ env.REGISTRY }}"
             DOCKER_IMAGE_NAME="${{ env.IMAGE_NAME }}"
             CONTAINER_NAME="${{ env.CONTAINER_NAME }}"
+            
+            echo "🧹 Pre-deploy cleanup on VPS..."
+            docker system prune -f
+            docker image prune -f
+            docker container prune -f
+            docker volume prune -f
+            docker network prune -f
           
             echo "🐳 Pulling Docker image: \$DOCKER_REGISTRY/\$DOCKER_IMAGE_NAME:latest"
             docker pull "\$DOCKER_REGISTRY/\$DOCKER_IMAGE_NAME:latest"
@@ -154,16 +228,19 @@ jobs:
               "\$DOCKER_REGISTRY/\$DOCKER_IMAGE_NAME:latest"
 
             echo "📜 Last 100 logs from container..."
-            docker logs --tail 100 "\$CONTAINER_NAME"  # LOG sınırlama Container ayağa kalktıktan hemen sonra logları GitHub Actions’ın log ekranına düşer.
+            docker logs --tail 100 "\$CONTAINER_NAME"
             
-            echo "🧹 Cleaning up dangling Docker images..."
-            docker image prune -f --filter "until=4h"   # 4H DEN ESKİ sadece kullanılmayan eski image'ları siler
-          
-            echo "🧹 Cleaning up unused containers and networks..."
-            docker container prune -f
-            docker network prune -f
-          
+            echo "🧹 Post-deploy cleanup on VPS..."
+            docker image prune -f --filter "until=2h"   # 2 saatten eski image'ları sil
+            docker system prune -f
+            
+            echo "📊 Final container status:"
             docker ps --filter "name=\$CONTAINER_NAME" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
           EOF
 
-          
+      - name: Final cleanup
+        if: always()
+        run: |
+          echo "🧹 Final cleanup after deployment..."
+          docker system prune -f || true
+          sudo rm -rf ~/.ssh/deploy_key || true
