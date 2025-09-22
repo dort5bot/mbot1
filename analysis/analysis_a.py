@@ -1,6 +1,5 @@
 """
-analysis/analysis_a.py
-Ana analiz aggregator modülü - Tüm analiz modüllerini koordine eder ve sinyal üretir
+analysis/analysis_a.py - Geliştirilmiş Ana Analiz Aggregator
 """
 
 import asyncio
@@ -9,6 +8,7 @@ import time
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass
 from functools import lru_cache
+import numpy as np
 
 from config import BotConfig, get_config
 from utils.binance.binance_a import BinanceAPI
@@ -16,18 +16,18 @@ from utils.binance.binance_a import BinanceAPI
 # Analiz modüllerini import et
 from .causality import CausalityAnalyzer
 from .derivs import compute_derivatives_sentiment
-#from .onchain import OnchainAnalyzer
-from analysis.onchain import get_onchain_analyzer
-
+from .onchain import get_onchain_analyzer
 from .orderflow import OrderflowAnalyzer
-from .regime import RegimeAnalyzer
+from .regime import get_regime_analyzer
 from .risk import RiskManager
 from .tremo import TremoAnalyzer
+from .score import get_score_aggregator, ScoreConfig  # Yeni skor modülü
 
 logger = logging.getLogger(__name__)
 
 @dataclass
 class AnalysisResult:
+    """Geliştirilmiş analiz sonuçları"""
     symbol: str
     timestamp: float
     module_scores: Dict[str, float]
@@ -36,9 +36,12 @@ class AnalysisResult:
     gnosis_signal: float
     recommendation: str
     position_size: float
+    confidence: float
+    market_regime: str
+    timeframes: Dict[str, float]  # Çoklu timeframe analizi
 
 class AnalysisAggregator:
-    """Ana analiz aggregator sınıfı"""
+    """Geliştirilmiş ana analiz aggregator"""
     
     _instance = None
     
@@ -57,14 +60,14 @@ class AnalysisAggregator:
         self.causality = CausalityAnalyzer()
         self.causality.set_binance_api(binance_api)
         
-        #self.onchain = OnchainAnalyzer()
-        self.onchain = get_onchain_analyzer(binance_api)    # Artık set_binance_api() çağrısı gerekmiyor
+        self.onchain = get_onchain_analyzer(binance_api)
         self.orderflow = OrderflowAnalyzer(binance_api)
-        
-        #self.regime = RegimeAnalyzer(binance_api)
         self.regime = get_regime_analyzer(binance_api)
         self.risk = RiskManager(binance_api)
         self.tremo = TremoAnalyzer(binance_api)
+        
+        # Skor agregator
+        self.score_aggregator = get_score_aggregator()
     
     async def _get_config(self):
         if self.config is None:
@@ -73,18 +76,38 @@ class AnalysisAggregator:
     
     @lru_cache(maxsize=100)
     async def _get_cached_analysis(self, symbol: str, cache_key: str):
-        """1 dakikalık cache mekanizması"""
+        """Geliştirilmiş cache mekanizması"""
         current_time = time.time()
         if cache_key in self._cache:
-            cached_data, timestamp = self._cache[cache_key]
-            if current_time - timestamp < 60:  # 1 dakika cache
+            cached_data, timestamp, symbol_cached = self._cache[cache_key]
+            # Sembol değişmişse cache'i geçersiz kıl
+            if symbol == symbol_cached and current_time - timestamp < 60:
                 return cached_data
         return None
     
+    async def run_multi_timeframe_analysis(self, symbol: str) -> Dict[str, float]:
+        """Çoklu timeframe analizi"""
+        timeframes = ["15m", "1h", "4h", "1d"]
+        results = {}
+        
+        for tf in timeframes:
+            try:
+                # Regime analyzer multi-timeframe desteği
+                if hasattr(self.regime, 'analyze'):
+                    result = await self.regime.analyze(symbol, tf)
+                    results[tf] = result.score
+                else:
+                    results[tf] = 0.0
+            except Exception as e:
+                logger.warning(f"Timeframe analiz hatası {symbol} {tf}: {e}")
+                results[tf] = 0.0
+                
+        return results
+    
     async def run_analysis(self, symbol: str) -> AnalysisResult:
-        """Tüm analiz modüllerini çalıştır ve sonuçları aggregate et"""
+        """Geliştirilmiş analiz metodu"""
         config = await self._get_config()
-        cache_key = f"analysis_{symbol}"
+        cache_key = f"analysis_{symbol}_{int(time.time() // 60)}"  # Dakikalık cache
         
         # Cache kontrolü
         cached = await self._get_cached_analysis(symbol, cache_key)
@@ -92,83 +115,121 @@ class AnalysisAggregator:
             return cached
         
         module_scores = {}
+        module_errors = {}
         
         try:
-            # Tüm modülleri paralel çalıştır
-            tasks = [
-                self._run_causality(symbol),
-                self._run_derivs(symbol),
-                self._run_onchain(),
-                self._run_orderflow(symbol),
-                self._run_regime(symbol),
-                self._run_tremo(symbol)
-            ]
+            # Tüm modülleri paralel çalıştır with timeout
+            tasks = {
+                "causality": asyncio.create_task(self._run_causality(symbol)),
+                "derivs": asyncio.create_task(self._run_derivs(symbol)),
+                "onchain": asyncio.create_task(self._run_onchain()),
+                "orderflow": asyncio.create_task(self._run_orderflow(symbol)),
+                "regime": asyncio.create_task(self._run_regime(symbol)),
+                "tremo": asyncio.create_task(self._run_tremo(symbol)),
+                "risk": asyncio.create_task(self._run_risk(symbol))
+            }
             
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-            
-            # Sonuçları işle
-            module_names = ["causality", "derivs", "onchain", "orderflow", "regime", "tremo"]
-            for i, (name, result) in enumerate(zip(module_names, results)):
-                if isinstance(result, Exception):
-                    logger.error(f"{name} modülü hatası: {result}")
+            # Timeout ile çalıştır
+            for name, task in tasks.items():
+                try:
+                    result = await asyncio.wait_for(task, timeout=30.0)
+                    module_scores[name] = result
+                except asyncio.TimeoutError:
+                    logger.warning(f"{name} modülü timeout oldu")
                     module_scores[name] = 0.0
-                else:
-                    module_scores[name] = result if isinstance(result, (int, float)) else result.get("score", 0.0)
+                    module_errors[name] = "timeout"
+                except Exception as e:
+                    logger.error(f"{name} modülü hatası: {e}")
+                    module_scores[name] = 0.0
+                    module_errors[name] = str(e)
         
         except Exception as e:
-            logger.error(f"Analiz sırasında hata: {e}")
-            # Fallback: nötr skorlar
-            module_scores = {name: 0.0 for name in module_names}
+            logger.error(f"Analiz sırasında beklenmeyen hata: {e}")
+            # Fallback scores
+            module_scores = {name: 0.0 for name in tasks.keys()}
         
-        # Alpha signal score hesapla (ağırlıklı ortalama)
-        weights = config.MODULE_WEIGHTS
-        alpha_signal_score = sum(
-            module_scores.get(module, 0.0) * weights.get(module, 0.0)
-            for module in weights
-        )
+        # Skor agregasyonu
+        score_result = self.score_aggregator.calculate_final_score(module_scores)
         
-        # Risk skoru hesapla
+        # Risk skoru
         risk_result = await self.risk.combined_risk_score(symbol)
-        position_risk_score = risk_result.get("score", 0.6)  # Default 0.6
+        position_risk_score = risk_result.get("score", 0.6)
         
-        # Gnosis signal hesapla
-        gnosis_signal = alpha_signal_score * position_risk_score
+        # Gnosis signal
+        gnosis_signal = score_result["final_score"] * position_risk_score
+        
+        # Çoklu timeframe analizi
+        timeframe_scores = await self.run_multi_timeframe_analysis(symbol)
         
         # Öneri ve pozisyon büyüklüğü
-        recommendation, position_size = self._get_recommendation(gnosis_signal, config)
+        recommendation, position_size = self._get_recommendation(
+            gnosis_signal, 
+            score_result["confidence"],
+            config
+        )
+        
+        # Piyasa rejimi
+        market_regime = await self._get_market_regime(symbol)
         
         result = AnalysisResult(
             symbol=symbol,
             timestamp=time.time(),
             module_scores=module_scores,
-            alpha_signal_score=alpha_signal_score,
+            alpha_signal_score=score_result["raw_score"],
             position_risk_score=position_risk_score,
             gnosis_signal=gnosis_signal,
             recommendation=recommendation,
-            position_size=position_size
+            position_size=position_size,
+            confidence=score_result["confidence"],
+            market_regime=market_regime,
+            timeframes=timeframe_scores
         )
         
         # Cache'e kaydet
-        self._cache[cache_key] = (result, time.time())
+        self._cache[cache_key] = (result, time.time(), symbol)
         
-        logger.info(f"Analiz tamamlandı: {symbol} - Gnosis: {gnosis_signal:.3f}")
+        logger.info(f"✅ Analiz tamamlandı: {symbol} - Skor: {gnosis_signal:.3f} - Güven: {score_result['confidence']:.2f}")
         return result
     
-    def _get_recommendation(self, gnosis_signal: float, config) -> Tuple[str, float]:
-        """Sinyal skoruna göre öneri ve pozisyon büyüklüğü belirle"""
+    def _get_recommendation(self, gnosis_signal: float, confidence: float, config) -> Tuple[str, float]:
+        """Geliştirilmiş öneri sistemi"""
         thresholds = config.SIGNAL_THRESHOLDS
         
-        if gnosis_signal >= thresholds["strong_bull"]:
-            return "FULL_BUY", 1.0  # %100 pozisyon
-        elif gnosis_signal >= thresholds["bull"]:
-            return "BUY", 0.6  # %60 pozisyon
-        elif gnosis_signal <= thresholds["strong_bear"]:
-            return "FULL_SELL", 1.0  # %100 short
-        elif gnosis_signal <= thresholds["bear"]:
-            return "SELL", 0.6  # %60 short
+        # Güven faktörü ile threshold ayarı
+        confidence_multiplier = 0.5 + (confidence * 0.5)  # 0.5-1.0 arası
+        adjusted_thresholds = {
+            k: v * confidence_multiplier for k, v in thresholds.items()
+        }
+        
+        if gnosis_signal >= adjusted_thresholds["strong_bull"]:
+            return "STRONG_BUY", min(1.0, 0.8 + (confidence * 0.2))
+        elif gnosis_signal >= adjusted_thresholds["bull"]:
+            return "BUY", min(0.8, 0.5 + (confidence * 0.3))
+        elif gnosis_signal <= adjusted_thresholds["strong_bear"]:
+            return "STRONG_SELL", min(1.0, 0.8 + (confidence * 0.2))
+        elif gnosis_signal <= adjusted_thresholds["bear"]:
+            return "SELL", min(0.8, 0.5 + (confidence * 0.3))
         else:
-            return "NEUTRAL", 0.0  # Bekle
+            return "HOLD", 0.0
     
+    async def _get_market_regime(self, symbol: str) -> str:
+        """Piyasa rejimini belirle"""
+        try:
+            regime_result = await self.regime.analyze(symbol)
+            score = getattr(regime_result, 'score', 0.0)
+            
+            if score >= 0.3:
+                return "TREND_BULL"
+            elif score <= -0.3:
+                return "TREND_BEAR"
+            else:
+                return "RANGE"
+        except Exception as e:
+            logger.warning(f"Piyasa rejimi belirleme hatası: {e}")
+            return "UNKNOWN"
+    
+    # Modül çalıştırma metodları (mevcut implementasyon korunacak)
+   
     async def _run_causality(self, symbol: str) -> float:
         """Causality analizini çalıştır"""
         try:
@@ -224,6 +285,7 @@ class AnalysisAggregator:
         except Exception as e:
             logger.error(f"Tremo analiz hatası: {e}")
             return 0.0
+
 
 # Singleton instance
 def get_analysis_aggregator(binance_api: BinanceAPI) -> AnalysisAggregator:
