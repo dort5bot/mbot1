@@ -6,6 +6,7 @@ import time
 import hashlib
 import hmac
 import json
+import asyncio  # bu satırı ekle
 from typing import Dict, List, Any, Optional, Union
 import pandas as pd
 import numpy as np

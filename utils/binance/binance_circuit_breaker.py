@@ -129,6 +129,21 @@ class CircuitBreaker:
                 self.state.state = "OPEN"
                 logger.error(f"❌ CircuitBreaker '{self.name}' opened due to {self.state.failures} failures")
     
+    async def record_failure(self, error: Optional[Exception] = None) -> None:
+        """
+        Manually record a failure. Can be used externally.
+        
+        Args:
+            error: Optional exception for logging
+        """
+        await self._on_failure(error or Exception("Manual failure"))
+    
+    async def record_success(self) -> None:
+        """
+        Manually record a success. Can be used externally.
+        """
+        await self._on_success()
+
     def get_state(self) -> dict:
         """Get current circuit breaker state."""
         return {

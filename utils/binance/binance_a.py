@@ -1,5 +1,5 @@
 """
-utils/binance/binance_api.py
+utils/binance/binance_a.py
 Binance API aggregator - Geliştirilmiş ve optimize edilmiş son sürüm.
 
 Bu modül, BinancePublicAPI ve BinancePrivateAPI sınıflarını birleştirerek

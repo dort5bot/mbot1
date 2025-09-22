@@ -11,6 +11,7 @@ WebSocket client for Binance API with aiogram 3.x compatibility.
 
 import asyncio
 import json
+import time  # bu satırı ekle
 import logging
 from typing import Dict, List, Any, Optional, Callable, Set, Union
 from dataclasses import dataclass

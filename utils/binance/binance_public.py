@@ -25,6 +25,8 @@ from .binance_circuit_breaker import CircuitBreaker  # expected: async execute(.
 from .binance_exceptions import BinanceAPIError
 from .binance_types import Interval, Symbol
 
+logger = logging.getLogger(__name__)  # bu satırı ekle
+
 LOG = logging.getLogger("binance_public")
 LOG.setLevel(logging.INFO)
 
@@ -201,27 +203,34 @@ class BinancePublicAPI:
             LOG.exception("Error getting klines for %s", symbol)
             raise BinanceAPIError(f"Error getting klines for {symbol}: {e}")
 
-    async def get_all_24h_tickers(self, symbol: str) -> Dict[str, Any]:
+    #async def get_all_24h_tickers(self, symbol: str) -> Dict[str, Any]:
+    async def get_all_24h_tickers(self, symbol: Optional[str] = None) -> Union[Dict[str, Any], List[Dict[str, Any]]]:
         """
-        Get 24 hour ticker price change statistics for a symbol.
+        Get 24 hour ticker price change statistics.
 
         Args:
-            symbol: trading pair symbol
+            symbol: optional trading pair symbol.
+                    If None, returns ALL symbols.
 
         Returns:
-            Dict with 24h change stats.
+            - Dict for single symbol
+            - List of dicts for all symbols
 
         Raises:
             BinanceAPIError on failure.
         """
         try:
-            LOG.debug("Requesting 24h ticker for %s", symbol)
+            params: Dict[str, Any] = {}
+            if symbol:
+                params["symbol"] = symbol.upper()
+
+            LOG.debug("Requesting 24h ticker for symbol=%s", symbol or "ALL")
             return await self.circuit_breaker.execute(
-                self.http._request, "GET", "/api/v3/ticker/24hr", {"symbol": symbol.upper()}
+                self.http._request, "GET", "/api/v3/ticker/24hr", params
             )
         except Exception as e:
-            LOG.exception("Error getting 24h ticker for %s", symbol)
-            raise BinanceAPIError(f"Error getting 24h ticker for {symbol}: {e}")
+            LOG.exception("Error getting 24h ticker for %s", symbol or "ALL")
+            raise BinanceAPIError(f"Error getting 24h ticker for {symbol or 'ALL'}: {e}")
 
     async def get_all_symbols(self) -> List[str]:
         """
