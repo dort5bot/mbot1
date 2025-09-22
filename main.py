@@ -9,10 +9,24 @@ Aiogram 3.x + Router pattern + Webhook + Render uyumlu.
 - Local polling desteği eklendi
 free tier platformlarla tam uyumludur.
 + (Webhook path now uses /webhook/<BOT_TOKEN> format)
+Aiogram 3.x’te Bot sınıfı default olarak data dict’i içermez.
+hem lifespan() fonksiyonunda hem de initialize_polling_mode() içinde bot yaratıldıktan hemen sonra şu satırı eklemelisiniz:
+bot.data = {}
 📌 
 2. Bot token sızma riski → Maskeleme iyileştirmesi
 /webhook/{token} GET endpoint'inde token'ın sadece ilk ve son birkaç karakteri gösteriliyor. Ancak bir yerde log’lanması hâlinde bu risk olabilir.
 🛡️ Öneri: Token'ı direkt olarak hiçbir response içine koymamak daha güvenlidir, ya da sadece sabit "***********" göstermek.
+
+eğer response’lar bir yerde loglanıyorsa, bu endpoint kullanılmaya devam ettikçe sızıntı olabilir.
+✅ Ne yapılabilir?
+Daha güvenli öneri:
+
+return web.json_response({
+    "status": "active",
+    "bot_token": "***********",  # veya bu alanı tamamen kaldır
+    "method": "POST",
+    "message": "Webhook is active. Use POST method for Telegram updates."
+})
 """
 
 import os
@@ -284,6 +298,8 @@ async def lifespan():
                 parse_mode=ParseMode.HTML,
             )
         )
+        bot.data = {}   # ✅ FIX: Bot nesnesine data dict ekle
+        
         
         # Initialize dispatcher with main router and error handler
         main_router = Router()
@@ -615,6 +631,8 @@ async def initialize_polling_mode() -> None:
             token=get_telegram_token(),
             default=DefaultBotProperties(parse_mode=ParseMode.HTML),
         )
+        bot.data = {}   # ✅ FIX: Bot nesnesine data dict ekle
+        
         dispatcher = Dispatcher()
 
         # Middleware ve handler'ları yükle
