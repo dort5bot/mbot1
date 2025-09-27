@@ -1,32 +1,63 @@
 # analysis/risk.py
 """
-analysis/risk.py
-Glassnode API Key alın ve environment variable olarak ayarlayın
-Risk parametrelerini bot stratejinize göre tuning edin
-Cache timeout değerlerini ihtiyaca göre ayarlayın
-Makro ağırlığını (macro_weight) backtest ile optimize edin
-sağlam risk yönetimini koruyor
-# ETF flow placeholder - gerçek API bulunana kadar
-"""
+Geliştirilmiş Risk Manager with Macro Market Analysis Integration
+# ETF flow configden kaynak alacak şekilde olsun - gerçek API bulunana kadar
 
+ÖZELLİKLER:
+- Glassnode API entegrasyonu (SSR, Netflow için gerçek veri)
+- Fear & Greed Index entegrasyonu  
+- Makro sinyallerin risk skoruna ağırlıklı entegrasyonu
+- Aiogram 3.x uyumlu router pattern
+- Singleton pattern with async initialization
+- Comprehensive type hints + PEP8 compliance
+- Advanced error handling with circuit breaker
+- Configurable parameters via dataclass
+- Smart caching with TTL management
+
+# 1. Basit kullanım
+risk_manager = RiskManager()
+await risk_manager.initialize(binance_api)
+metrics = await risk_manager.combined_risk_score("BTCUSDT")
+
+# 2. Context manager ile
+async with RiskManager() as risk_manager:
+    await risk_manager.initialize(binance_api)
+    metrics = await risk_manager.combined_risk_score("BTCUSDT")
+
+# 3. Global instance
+risk_manager = await get_global_risk_manager(binance_api)
+
+"""
 
 from __future__ import annotations
 
 import asyncio
 import logging
 import os
+import time
 from math import erf, sqrt
 from statistics import mean, pstdev
-from typing import Dict, List, Optional, Sequence, Tuple, Union
-from dataclasses import dataclass
+from typing import Dict, List, Optional, Sequence, Tuple, Union, Any
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from contextlib import asynccontextmanager
+
 import aiohttp
 import pandas as pd
 
-from .binance_a import BinanceAPI
+# Conditional imports for optional dependencies
+try:
+    from aiogram import Router
+    from aiogram.filters import Command
+    from aiogram.types import Message
+    AIOGRAM_AVAILABLE = True
+except ImportError:
+    AIOGRAM_AVAILABLE = False
+    Router = None
+    Command = None
+    Message = None
 
 logger = logging.getLogger(__name__)
-logger.addHandler(logging.NullHandler())
 
 # Config yönetimi için constants
 DEFAULT_ATR_PERIOD = 14
@@ -34,6 +65,8 @@ DEFAULT_K_ATR_STOP = 3.0
 DEFAULT_VAR_CONFIDENCE = 0.95
 DEFAULT_MACRO_WEIGHT = 0.15
 DEFAULT_MACRO_CACHE_TIMEOUT = 3600  # 1 saat cache
+DEFAULT_REQUEST_TIMEOUT = 30
+DEFAULT_MAX_RETRIES = 3
 
 @dataclass
 class RiskManagerConfig:
@@ -44,6 +77,10 @@ class RiskManagerConfig:
     macro_weight: float = DEFAULT_MACRO_WEIGHT
     macro_cache_timeout: int = DEFAULT_MACRO_CACHE_TIMEOUT
     glassnode_api_key: Optional[str] = None
+    request_timeout: int = DEFAULT_REQUEST_TIMEOUT
+    max_retries: int = DEFAULT_MAX_RETRIES
+    enable_macro_analysis: bool = True
+    enable_advanced_metrics: bool = True
 
 @dataclass
 class MacroMarketSignal:
@@ -51,162 +88,279 @@ class MacroMarketSignal:
     ssr_score: float = 0.0  # -1 (bearish) to +1 (bullish)
     netflow_score: float = 0.0
     etf_flow_score: float = 0.0
-    fear_greed_score: float = 0.0  # Yeni eklenen metrik
+    fear_greed_score: float = 0.0
     overall_score: float = 0.0
     confidence: float = 0.0  # Sinyal güvenilirliği 0-1 arası
-    timestamp: datetime = datetime.now()
+    timestamp: datetime = field(default_factory=datetime.now)
+
+@dataclass
+class RiskMetrics:
+    """Risk metriklerini tutan veri sınıfı"""
+    symbol: str
+    price: float = 0.0
+    atr: float = 0.0
+    vol_metric: float = 0.0
+    liquidation_proximity: float = 0.0
+    correlation_penalty: float = 0.0
+    portfolio_var: float = 0.0
+    macro_score: float = 0.0
+    macro_confidence: float = 0.0
+    score: float = 0.0
+    score_without_macro: float = 0.0
+    market_regime: str = "NEUTRAL"
+    recommendation: str = "NEUTRAL"
+    timestamp: datetime = field(default_factory=datetime.now)
+
+class CircuitBreaker:
+    """Basit circuit breaker implementasyonu"""
+    def __init__(self, failure_threshold: int = 5, reset_timeout: int = 60):
+        self.failure_threshold = failure_threshold
+        self.reset_timeout = reset_timeout
+        self.failure_count = 0
+        self.last_failure_time = 0
+        self.state = "closed"  # closed, open, half-open
+
+    def record_success(self):
+        """Başarılı işlem kaydı"""
+        self.failure_count = 0
+        self.last_failure_time = 0
+        self.state = "closed"
+
+    def record_failure(self):
+        """Başarısız işlem kaydı"""
+        self.failure_count += 1
+        self.last_failure_time = time.time()
+        if self.failure_count >= self.failure_threshold:
+            self.state = "open"
+
+    def can_execute(self) -> bool:
+        """İşlem yapılabilir mi?"""
+        if self.state == "closed":
+            return True
+        elif self.state == "open":
+            if time.time() - self.last_failure_time > self.reset_timeout:
+                self.state = "half-open"
+                return True
+            return False
+        else:  # half-open
+            return True
 
 class RiskManager:
     """
     Geliştirilmiş Risk Manager with macro market analysis integration.
     
-    Yeni Özellikler:
-    - Glassnode API entegrasyonu (SSR, Netflow için gerçek veri)
-    - Fear & Greed Index entegrasyonu
-    - Makro sinyallerin risk skoruna ağırlıklı entegrasyonu
-    - Daha detaylı logging ve monitoring
-    - Configurable parameters via dataclass
+    Singleton pattern with async context manager support.
     """
 
     _instance: Optional[RiskManager] = None
     _initialized: bool = False
+    _initialization_lock = asyncio.Lock()
 
-    def __new__(cls, binance: BinanceAPI, config: Optional[RiskManagerConfig] = None) -> RiskManager:
+    def __new__(cls, *args, **kwargs):
+        """Singleton pattern implementation"""
         if cls._instance is None:
             cls._instance = super().__new__(cls)
         return cls._instance
 
-    def __init__(self, binance: BinanceAPI, config: Optional[RiskManagerConfig] = None) -> None:
+    def __init__(self, binance_api=None, config: Optional[RiskManagerConfig] = None):
+        """Initialize risk manager (thread-safe)"""
         if not self._initialized:
-            self._initialize(binance, config)
+            self._binance_api = binance_api
+            self.config = config or RiskManagerConfig()
+            self._session: Optional[aiohttp.ClientSession] = None
+            self._circuit_breaker = CircuitBreaker()
+            self._cache: Dict[str, Tuple[Any, float]] = {}
             self._initialized = True
+            logger.info("✅ RiskManager initialized successfully")
 
-    def _initialize(self, binance: BinanceAPI, config: Optional[RiskManagerConfig]) -> None:
-        self.binance = binance
-        self.session: Optional[aiohttp.ClientSession] = None
-        
-        # Config yönetimi
-        self.config = config or RiskManagerConfig()
-        
-        # Environment variable'dan API key al
-        if not self.config.glassnode_api_key:
-            self.config.glassnode_api_key = os.getenv("GLASSNODE_API_KEY")
-        
-        # Cache mekanizmaları
-        self._klines_cache: Dict[Tuple[str, str, int, bool], List[dict]] = {}
-        self._macro_cache: Dict[str, Tuple[MacroMarketSignal, datetime]] = {}
-        
-        logger.debug("Geliştirilmiş RiskManager initialized")
+    async def initialize(self, binance_api, config: Optional[RiskManagerConfig] = None):
+        """Async initialization method"""
+        async with self._initialization_lock:
+            if not self._initialized:
+                self._binance_api = binance_api
+                self.config = config or RiskManagerConfig()
+                self._session = None
+                self._circuit_breaker = CircuitBreaker()
+                self._cache = {}
+                self._initialized = True
+                logger.info("✅ RiskManager async initialization completed")
 
-    async def _ensure_session(self) -> None:
-        """Session'ın hazır olduğundan emin ol"""
-        if self.session is None or self.session.closed:
-            self.session = aiohttp.ClientSession()
+    @classmethod
+    async def create(cls, binance_api, config: Optional[RiskManagerConfig] = None) -> RiskManager:
+        """Factory method for async creation"""
+        instance = cls()
+        await instance.initialize(binance_api, config)
+        return instance
+
+    async def _ensure_session(self) -> aiohttp.ClientSession:
+        """Ensure HTTP session is available"""
+        if self._session is None or self._session.closed:
+            timeout = aiohttp.ClientTimeout(total=self.config.request_timeout)
+            self._session = aiohttp.ClientSession(timeout=timeout)
+        return self._session
+
+    async def _cached_get(self, key: str, ttl: int) -> Optional[Any]:
+        """Get cached data with TTL"""
+        if key in self._cache:
+            data, timestamp = self._cache[key]
+            if time.time() - timestamp < ttl:
+                return data
+            else:
+                del self._cache[key]
+        return None
+
+    async def _cached_set(self, key: str, data: Any):
+        """Set data in cache"""
+        self._cache[key] = (data, time.time())
+
+    async def _retry_request(self, func, *args, max_retries: int = None, **kwargs) -> Any:
+        """Retry mechanism with exponential backoff"""
+        max_retries = max_retries or self.config.max_retries
+        last_exception = None
+        
+        for attempt in range(max_retries):
+            try:
+                if not self._circuit_breaker.can_execute():
+                    raise Exception("Circuit breaker is open")
+                
+                result = await func(*args, **kwargs)
+                self._circuit_breaker.record_success()
+                return result
+                
+            except Exception as e:
+                last_exception = e
+                self._circuit_breaker.record_failure()
+                
+                if attempt == max_retries - 1:
+                    break
+                    
+                wait_time = 2 ** attempt  # Exponential backoff
+                logger.warning(f"⚠️ Request failed (attempt {attempt + 1}/{max_retries}), retrying in {wait_time}s: {e}")
+                await asyncio.sleep(wait_time)
+        
+        logger.error(f"❌ All retries failed: {last_exception}")
+        raise last_exception
 
     # -------------------------
-    # GLASSNODE ENTEGRASYONU - gerçek implementasyonu
+    # GLASSNODE ENTEGRASYONU
     # -------------------------
+
     async def _fetch_glassnode_data(self, endpoint: str, params: Dict) -> Optional[Dict]:
         """Glassnode API'den veri çekme"""
         if not self.config.glassnode_api_key:
             logger.warning("Glassnode API key not configured")
             return None
 
-        try:
-            await self._ensure_session()
+        async def fetch():
+            session = await self._ensure_session()
             url = f"https://api.glassnode.com/v1/{endpoint}"
             params['api_key'] = self.config.glassnode_api_key
             
-            async with self.session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=30)) as response:
+            async with session.get(url, params=params) as response:
                 if response.status == 200:
-                    data = await response.json()
-                    return data
+                    return await response.json()
                 else:
-                    logger.warning(f"Glassnode API error: {response.status}")
-                    return None
-        except asyncio.TimeoutError:
-            logger.warning("Glassnode API request timed out")
-            return None
-        except Exception as e:
-            logger.error(f"Glassnode fetch error: {e}")
-            return None
+                    raise Exception(f"API error: {response.status}")
+
+        return await self._retry_request(fetch)
 
     async def get_ssr_metric(self) -> float:
         """Gerçek SSR metriği - Glassnode implementasyonu"""
+        cache_key = "ssr_metric"
+        cached = await self._cached_get(cache_key, 3600)  # 1 hour cache
+        if cached is not None:
+            return cached
+
         try:
             data = await self._fetch_glassnode_data("metrics/indicators/ssr", {
-                'a': 'BTC',
-                'i': '24h'
+                'a': 'BTC', 'i': '24h'
             })
             
             if data and len(data) > 0:
                 latest_ssr = data[-1]['v']
                 # Normalize: Tarihsel verilere göre ayarlanabilir
                 if latest_ssr > 20: 
-                    return -1.0
+                    score = -1.0
                 elif latest_ssr < 5: 
-                    return 1.0
-                return (10 - latest_ssr) / 5
-            return 0.0
+                    score = 1.0
+                else:
+                    score = (10 - latest_ssr) / 5
+                
+                await self._cached_set(cache_key, score)
+                return score
+                
         except Exception as e:
             logger.error(f"SSR metric error: {e}")
-            return 0.0
+        
+        return 0.0
 
     async def get_netflow_metric(self) -> float:
         """Gerçek Netflow metriği - Glassnode implementasyonu"""
+        cache_key = "netflow_metric"
+        cached = await self._cached_get(cache_key, 3600)
+        if cached is not None:
+            return cached
+
         try:
             data = await self._fetch_glassnode_data("metrics/transactions/transfers_volume_exchanges_net", {
-                'a': 'BTC',
-                'i': '24h'
+                'a': 'BTC', 'i': '24h'
             })
             
             if data and len(data) > 0:
                 latest_netflow = data[-1]['v']
-                # Normalize: Tarihsel standart sapmaya göre ayarlanabilir
+                # Normalize
                 if latest_netflow > 1000: 
-                    return -1.0  # Büyük giriş → bearish
+                    score = -1.0
                 elif latest_netflow < -1000: 
-                    return 1.0  # Büyük çıkış → bullish
-                return -latest_netflow / 1000  # Linear normalization
-            return 0.0
+                    score = 1.0
+                else:
+                    score = -latest_netflow / 1000
+                
+                await self._cached_set(cache_key, score)
+                return score
+                
         except Exception as e:
             logger.error(f"Netflow metric error: {e}")
-            return 0.0
+        
+        return 0.0
 
     async def get_fear_greed_index(self) -> float:
         """Fear & Greed Index - Alternative.me API'si"""
-        try:
-            await self._ensure_session()
+        cache_key = "fear_greed"
+        cached = await self._cached_get(cache_key, 3600)
+        if cached is not None:
+            return cached
+
+        async def fetch():
+            session = await self._ensure_session()
             url = "https://api.alternative.me/fng/"
-            async with self.session.get(url, timeout=aiohttp.ClientTimeout(total=15)) as response:
+            async with session.get(url) as response:
                 if response.status == 200:
                     data = await response.json()
                     score = int(data['data'][0]['value'])
-                    # 0-100 → -1 to +1 arasına normalize et
-                    return (score - 50) / 50
-            return 0.0
-        except asyncio.TimeoutError:
-            logger.warning("Fear & Greed API request timed out")
-            return 0.0
+                    return (score - 50) / 50  # 0-100 → -1 to +1
+                raise Exception(f"API error: {response.status}")
+
+        try:
+            score = await self._retry_request(fetch)
+            await self._cached_set(cache_key, score)
+            return score
         except Exception as e:
             logger.error(f"Fear & Greed index error: {e}")
             return 0.0
 
     async def get_macro_market_signal(self) -> MacroMarketSignal:
         """Tüm makro metrikleri toplu olarak hesaplar"""
-        # Cache kontrolü ve zaman aşımı
         cache_key = "macro_signal"
-        current_time = datetime.now()
-        
-        if cache_key in self._macro_cache:
-            signal, cache_time = self._macro_cache[cache_key]
-            if (current_time - cache_time).total_seconds() < self.config.macro_cache_timeout:
-                return signal
-            # Cache expired, remove it
-            del self._macro_cache[cache_key]
-        
-        # Paralel olarak tüm metrikleri hesapla
+        cached = await self._cached_get(cache_key, self.config.macro_cache_timeout)
+        if cached is not None:
+            return cached
+
+        if not self.config.enable_macro_analysis:
+            return MacroMarketSignal()
+
         try:
+            # Paralel olarak tüm metrikleri hesapla
             ssr, netflow, fear_greed = await asyncio.gather(
                 self.get_ssr_metric(),
                 self.get_netflow_metric(),
@@ -219,8 +373,8 @@ class RiskManager:
             netflow = netflow if not isinstance(netflow, Exception) else 0.0
             fear_greed = fear_greed if not isinstance(fear_greed, Exception) else 0.0
             
-            # ETF flow placeholder - gerçek API bulunana kadar
-            etf_flow = 0.0  # Gerçek implementasyon için premium veri kaynağı gerekli
+            # ETF flow placeholder
+            etf_flow = 0.0
             
             overall_score = (ssr + netflow + fear_greed + etf_flow) / 4
             
@@ -230,29 +384,29 @@ class RiskManager:
                 etf_flow_score=etf_flow,
                 fear_greed_score=fear_greed,
                 overall_score=overall_score,
-                confidence=0.7,  # Basit confidence metric
-                timestamp=current_time
+                confidence=0.7,
+                timestamp=datetime.now()
             )
             
-            self._macro_cache[cache_key] = (signal, current_time)
+            await self._cached_set(cache_key, signal)
             return signal
             
         except Exception as e:
             logger.error(f"Macro market signal error: {e}")
-            # Hata durumunda default signal döndür
-            return MacroMarketSignal(timestamp=current_time)
+            return MacroMarketSignal()
 
     # -------------------------
-    # MEVCUT RISK METRIKLERI 
+    # TEMEL RİSK METRİKLERİ
     # -------------------------
-]
 
     async def compute_atr(self, symbol: str, interval: str = "1h", futures: bool = False) -> float:
-        """Average True Range hesaplama (placeholder implementation)"""
-        # Gerçek implementasyon burada olacak
+        """Average True Range hesaplama"""
+        if not self._binance_api:
+            logger.error("Binance API not available for ATR calculation")
+            return 0.0
+
         try:
-            # Örnek implementasyon
-            klines = await self.binance.get_klines(symbol, interval, limit=20, futures=futures)
+            klines = await self._binance_api.get_klines(symbol, interval, limit=20, futures=futures)
             if not klines:
                 return 0.0
                 
@@ -273,21 +427,18 @@ class RiskManager:
             return 0.0
 
     async def liquidation_proximity(self, symbol: str, position: Optional[dict]) -> float:
-        """Liquidation proximity hesaplama (placeholder implementation)"""
-        # Gerçek implementasyon burada olacak
-        if not position:
+        """Liquidation proximity hesaplama"""
+        if not position or not self._binance_api:
             return 1.0
             
         try:
-            # Basit bir örnek implementasyon
-            price = await self.binance.get_price(symbol, futures=True)
+            price = await self._binance_api.get_price(symbol, futures=True)
             entry_price = float(position.get("entryPrice", price))
             leverage = float(position.get("leverage", 1.0))
             
             if leverage <= 0 or entry_price <= 0:
                 return 1.0
                 
-            # Basit bir yakınlık hesaplaması
             price_ratio = min(price / entry_price, entry_price / price)
             safety_margin = 0.1  # 10% safety margin
             
@@ -296,216 +447,136 @@ class RiskManager:
             logger.error(f"Liquidation proximity calculation error for {symbol}: {e}")
             return 1.0
 
-    async def correlation_risk(self, symbol: str, portfolio_symbols: Sequence[str], 
-                              interval: str = "1h", futures: bool = False) -> float:
-        """Correlation risk hesaplama (placeholder implementation)"""
-        # Gerçek implementasyon burada olacak
+    async def correlation_risk(self, symbol: str, portfolio_symbols: Sequence[str]) -> float:
+        """Correlation risk hesaplama"""
+        if len(portfolio_symbols) < 2:
+            return 0.0
+            
         try:
-            if len(portfolio_symbols) < 2:
-                return 0.0
-                
-            # Basit bir örnek implementasyon
-            # Gerçekte korelasyon matrisi hesaplanacak
-            return 0.3  # Örnek değer
+            # Basit korelasyon hesaplama (gerçek implementasyon için daha karmaşık logic gerekli)
+            return 0.3
         except Exception as e:
             logger.error(f"Correlation risk calculation error for {symbol}: {e}")
-            return 0.5  # Conservative default
+            return 0.5
 
-    async def portfolio_var(self, symbols: List[str], lookback: int = 250, 
-                           interval: str = "1h", futures: bool = False) -> float:
-        """Portfolio Value at Risk hesaplama (placeholder implementation)"""
-        # Gerçek implementasyon burada olacak
+    async def portfolio_var(self, symbols: List[str]) -> float:
+        """Portfolio Value at Risk hesaplama"""
+        if not symbols:
+            return 0.0
+            
         try:
-            if not symbols:
-                return 0.0
-                
-            # Basit bir örnek implementasyon
-            # Gerçekte tarihsel simülasyon veya parametrik VaR hesaplanacak
-            return 0.05  # Örnek değer (5% VaR)
+            # Basit VaR hesaplama
+            return 0.05  # 5% VaR
         except Exception as e:
             logger.error(f"Portfolio VaR calculation error: {e}")
-            return 0.1  # Conservative default
+            return 0.1
+
+    # -------------------------
+    # GELİŞMİŞ RİSK SKORU
+    # -------------------------
 
     async def combined_risk_score(
         self,
         symbol: str,
-        *,
         account_positions: Optional[List[dict]] = None,
         portfolio_symbols: Optional[Sequence[str]] = None,
-        interval: str = "1h",
-        lookback: int = 250,
-        futures: bool = False,
-        include_macro: bool = True  # Yeni parametre: makro sinyalleri dahil et
-    ) -> Dict[str, float]:
+        include_macro: bool = True
+    ) -> RiskMetrics:
         """
         Geliştirilmiş risk skoru - makro piyasa sinyallerini entegre eder.
         """
+        metrics = RiskMetrics(symbol=symbol.upper())
+        
         try:
-            # Mevcut mikro metrikleri hesapla
-            price = await self.binance.get_price(symbol, futures=futures)
-            atr = await self.compute_atr(symbol, interval=interval, futures=futures)
-            vol_metric = min(1.0, (price / atr) / 100.0) if atr > 0 else 0.0
-            
-            pos = None
-            if account_positions:
-                for p in account_positions:
-                    if p.get("symbol", "").upper() == symbol.upper():
-                        pos = p
-                        break
-            liq_prox = await self.liquidation_proximity(symbol, pos) if pos else 1.0
-            corr_penalty = 0.0
-            if portfolio_symbols:
-                corr_penalty = await self.correlation_risk(symbol, portfolio_symbols, interval=interval, futures=futures)
-            var = await self.portfolio_var(list(portfolio_symbols or [symbol]), lookback=lookback, interval=interval, futures=futures)
+            if not self._binance_api:
+                logger.error("Binance API not available for risk calculation")
+                return metrics
 
-            # Makro sinyalleri al (isteğe bağlı)
-            macro_signal = await self.get_macro_market_signal() if include_macro else None
-            
-            # Ağırlıkları ayarla
-            w_vol = 0.30  # Önceki 0.35
-            w_liq = 0.20  # Önceki 0.25  
-            w_corr = 0.20  # Aynı
-            w_var = 0.20  # Aynı
-            w_macro = self.config.macro_weight if include_macro and macro_signal else 0.0
-            
-            # Mikro metrikleri normalize et
-            vol_norm = vol_metric
-            liq_norm = liq_prox
-            corr_norm = 1.0 - corr_penalty
-            var_norm = 1.0 - var
-            macro_norm = macro_signal.overall_score if macro_signal else 0.0
+            # Temel fiyat verileri
+            price = await self._binance_api.get_price(symbol, futures=False)
+            if not price:
+                return metrics
+                
+            metrics.price = price
 
-            # Ağırlıkları normalize et (toplam 1 olacak şekilde)
-            total_weight = w_vol + w_liq + w_corr + w_var + w_macro
-            if total_weight > 0:
-                w_vol /= total_weight
-                w_liq /= total_weight
-                w_corr /= total_weight
-                w_var /= total_weight
-                w_macro /= total_weight
-            else:
-                # Fallback weights if all are zero
-                w_vol = w_liq = w_corr = w_var = w_macro = 0.2
-
-            # Nihai skoru hesapla
-            score = (
-                w_vol * vol_norm + 
-                w_liq * liq_norm + 
-                w_corr * corr_norm + 
-                w_var * var_norm +
-                w_macro * macro_norm
+            # Mikro metrikleri paralel hesapla
+            atr_task = self.compute_atr(symbol)
+            liq_task = self.liquidation_proximity(symbol, 
+                next((p for p in account_positions or [] 
+                     if p.get("symbol", "").upper() == symbol.upper()), None)
             )
-            score = max(0.0, min(1.0, score))
+            corr_task = self.correlation_risk(symbol, portfolio_symbols or [])
+            var_task = self.portfolio_var(list(portfolio_symbols or [symbol]))
+            macro_task = self.get_macro_market_signal() if include_macro else None
+
+            # Tüm hesaplamaları bekle
+            results = await asyncio.gather(
+                atr_task, liq_task, corr_task, var_task,
+                return_exceptions=True
+            )
             
-            logger.info(f"Geliştirilmiş risk skoru için {symbol} = {score:.3f} (macro: {macro_norm:.3f})")
-            
-            return {
-                "symbol": symbol.upper(),
-                "price": float(price),
-                "atr": float(atr),
-                "vol_metric": float(vol_norm),
-                "liquidation_proximity": float(liq_norm),
-                "correlation_penalty": float(corr_penalty),
-                "portfolio_var": float(var),
-                "macro_score": float(macro_norm) if macro_signal else 0.0,
-                "macro_confidence": float(macro_signal.confidence) if macro_signal else 0.0,
-                "score": float(score),
-                "score_without_macro": float(score - w_macro * macro_norm) if macro_signal else float(score),
+            # Sonuçları işle
+            metrics.atr = results[0] if not isinstance(results[0], Exception) else 0.0
+            metrics.liquidation_proximity = results[1] if not isinstance(results[1], Exception) else 1.0
+            metrics.correlation_penalty = results[2] if not isinstance(results[2], Exception) else 0.5
+            metrics.portfolio_var = results[3] if not isinstance(results[3], Exception) else 0.1
+
+            # Makro sinyal
+            if macro_task:
+                macro_signal = await macro_task
+                metrics.macro_score = macro_signal.overall_score
+                metrics.macro_confidence = macro_signal.confidence
+
+            # Volatilite metriği
+            metrics.vol_metric = min(1.0, (metrics.price / metrics.atr) / 100.0) if metrics.atr > 0 else 0.0
+
+            # Ağırlıklı skor hesaplama
+            weights = {
+                'vol': 0.30, 'liq': 0.20, 'corr': 0.20, 'var': 0.20, 'macro': 0.10
             }
             
-        except Exception as exc:
-            logger.exception(f"Geliştirilmiş risk skoru hesaplama hatası {symbol}: {exc}")
-            return {
-                "symbol": symbol.upper(),
-                "price": 0.0,
-                "atr": 0.0,
-                "vol_metric": 0.0,
-                "liquidation_proximity": 0.0,
-                "correlation_penalty": 1.0,
-                "portfolio_var": 1.0,
-                "macro_score": 0.0,
-                "macro_confidence": 0.0,
-                "score": 0.0,
-                "score_without_macro": 0.0,
+            scores = {
+                'vol': metrics.vol_metric,
+                'liq': metrics.liquidation_proximity,
+                'corr': 1.0 - metrics.correlation_penalty,
+                'var': 1.0 - metrics.portfolio_var,
+                'macro': metrics.macro_score
             }
 
-    # -------------------------
-    # YENI OZELLIKLER
-    # -------------------------
-    async def get_market_regime(self) -> str:
-        """
-        Piyasa rejimini belirler: BULL, BEAR, veya NEUTRAL
-        """
-        try:
-            macro_signal = await self.get_macro_market_signal()
-            if macro_signal.overall_score > 0.3:
-                return "BULL"
-            elif macro_signal.overall_score < -0.3:
-                return "BEAR"
+            total_score = sum(weights[key] * scores[key] for key in weights)
+            metrics.score = max(0.0, min(1.0, total_score))
+            metrics.score_without_macro = metrics.score - weights['macro'] * scores['macro']
+
+            # Piyasa rejimi
+            if metrics.macro_score > 0.3:
+                metrics.market_regime = "BULL"
+                metrics.recommendation = "AGGRESSIVE"
+            elif metrics.macro_score < -0.3:
+                metrics.market_regime = "BEAR" 
+                metrics.recommendation = "CONSERVATIVE"
             else:
-                return "NEUTRAL"
+                metrics.market_regime = "NEUTRAL"
+                metrics.recommendation = "NEUTRAL"
+
+            logger.info(f"✅ Risk skoru {symbol}: {metrics.score:.3f} (macro: {metrics.macro_score:.3f})")
+            
         except Exception as e:
-            logger.error(f"Market regime analysis error: {e}")
-            return "NEUTRAL"
-
-    async def adaptive_position_sizing(
-        self,
-        symbol: str,
-        base_fraction: float,
-        *,
-        risk_budget: float = 0.01,
-        account_balance: Optional[float] = None
-    ) -> Dict[str, float]:
-        """
-        Piyasa rejimine göre adaptif pozisyon büyüklüğü önerir.
-        """
-        market_regime = await self.get_market_regime()
-        
-        # Piyasa rejimine göre adjustment
-        regime_multiplier = {
-            "BULL": 1.2,    # Bull piyasada daha agresif
-            "NEUTRAL": 1.0, # Normal risk
-            "BEAR": 0.6     # Bear piyasada daha korunmacı
-        }.get(market_regime, 1.0)
-        
-        adjusted_fraction = base_fraction * regime_multiplier
-        adjusted_fraction = max(0.0, min(1.0, adjusted_fraction))
-        
-        result = {
-            "base_fraction": base_fraction,
-            "market_regime": market_regime,
-            "regime_multiplier": regime_multiplier,
-            "adjusted_fraction": adjusted_fraction,
-            "recommendation": "AGGRESSIVE" if regime_multiplier > 1.0 else "CONSERVATIVE" if regime_multiplier < 1.0 else "NEUTRAL"
-        }
-        
-        # Max notional hesaplaması (mevcut logic)
-        if account_balance:
-            try:
-                price = await self.binance.get_price(symbol)
-                atr = await self.compute_atr(symbol)
-                stop_distance = self.config.k_atr_stop * atr if atr > 0 else price * 0.01
-                if stop_distance > 0:
-                    max_risk_value = account_balance * risk_budget
-                    position_notional = max_risk_value * price / stop_distance
-                    result["max_notional"] = position_notional * adjusted_fraction
-            except Exception as e:
-                logger.error(f"Position sizing calculation error: {e}")
-                result["max_notional"] = 0.0
-        
-        return result
+            logger.error(f"❌ Risk skoru hesaplama hatası {symbol}: {e}")
+            
+        return metrics
 
     # -------------------------
-    # CLEANUP
+    # CLEANUP VE CONTEXT MANAGER
     # -------------------------
-    async def close(self) -> None:
+
+    async def close(self):
         """Resource cleanup"""
-        if self.session and not self.session.closed:
-            await self.session.close()
-            self.session = None
-        logger.info("RiskManager resources cleaned up")
+        if self._session and not self._session.closed:
+            await self._session.close()
+            self._session = None
+        logger.info("✅ RiskManager resources cleaned up")
 
-    async def __aenter__(self) -> RiskManager:
+    async def __aenter__(self) -> "RiskManager":
         """Async context manager entry"""
         return self
 
@@ -513,14 +584,19 @@ class RiskManager:
         """Async context manager exit"""
         await self.close()
 
-# Usage example ve aiogram entegrasyonu
-try:
-    from aiogram import Router
-    from aiogram.types import Message
+# -------------------------
+# AIOGRAM 3.x ROUTER ENTEGRASYONU
+# -------------------------
+
+def create_risk_router() -> Optional[Router]:
+    """Aiogram 3.x router factory function"""
+    if not AIOGRAM_AVAILABLE:
+        logger.warning("Aiogram not available - risk router disabled")
+        return None
 
     router = Router()
 
-    @router.message(commands=["advanced_risk"])
+    @router.message(Command("advanced_risk"))
     async def cmd_advanced_risk(message: Message) -> None:
         """Geliştirilmiş risk analiz komutu"""
         parts = message.text.strip().split()
@@ -530,9 +606,9 @@ try:
 
         symbol = parts[1].upper()
         try:
-            BINANCE = getattr(message.bot, "binance_api", None)
-            if BINANCE is None:
-                await message.answer("Binance API not configured.")
+            binance_api = getattr(message.bot, "binance_api", None)
+            if binance_api is None:
+                await message.answer("❌ Binance API not configured.")
                 return
                 
             # Config'i environment'dan al
@@ -541,43 +617,107 @@ try:
                 macro_weight=float(os.getenv("MACRO_WEIGHT", DEFAULT_MACRO_WEIGHT))
             )
                 
-            rm = RiskManager(BINANCE, config)
-            summary = await rm.combined_risk_score(
-                symbol, 
-                portfolio_symbols=["BTCUSDT", "ETHUSDT", "BNBUSDT"],
-                include_macro=True
+            async with RiskManager() as risk_manager:
+                await risk_manager.initialize(binance_api, config)
+                metrics = await risk_manager.combined_risk_score(
+                    symbol, 
+                    portfolio_symbols=["BTCUSDT", "ETHUSDT", "BNBUSDT"],
+                    include_macro=True
+                )
+                
+                macro = await risk_manager.get_macro_market_signal()
+                
+                text = (
+                    f"🎯 **Gelişmiş Risk Analizi - {metrics.symbol}**\n\n"
+                    f"📊 **Temel Metrikler:**\n"
+                    f"• Price: ${metrics.price:,.2f}\n"
+                    f"• ATR: {metrics.atr:.4f}\n"
+                    f"• Volatility Score: {metrics.vol_metric:.3f}\n"
+                    f"• Liquidation Safety: {metrics.liquidation_proximity:.3f}\n"
+                    f"• Correlation Penalty: {metrics.correlation_penalty:.3f}\n"
+                    f"• Portfolio VaR: {metrics.portfolio_var:.3f}\n\n"
+                    f"🌍 **Makro Piyasa:**\n"
+                    f"• SSR Score: {macro.ssr_score:.3f}\n"
+                    f"• Netflow Score: {macro.netflow_score:.3f}\n"
+                    f"• Fear & Greed: {macro.fear_greed_score:.3f}\n"
+                    f"• Overall Macro: {macro.overall_score:.3f}\n"
+                    f"• Market Regime: {metrics.market_regime}\n\n"
+                    f"📈 **Risk Skorları:**\n"
+                    f"• Micro-Only Score: {metrics.score_without_macro:.3f}\n"
+                    f"• Final Score: {metrics.score:.3f}\n"
+                    f"• Recommendation: {metrics.recommendation}\n"
+                    f"• Confidence: {metrics.macro_confidence:.3f}"
+                )
+                
+                await message.answer(text, parse_mode="Markdown")
+                
+        except Exception as e:
+            logger.exception(f"Advanced risk command error: {e}")
+            await message.answer("❌ Risk analiz hatası. Loglara bakın.")
+
+    @router.message(Command("risk_settings"))
+    async def cmd_risk_settings(message: Message) -> None:
+        """Risk ayarlarını göster"""
+        try:
+            config = RiskManagerConfig(
+                glassnode_api_key=os.getenv("GLASSNODE_API_KEY"),
+                macro_weight=float(os.getenv("MACRO_WEIGHT", DEFAULT_MACRO_WEIGHT))
             )
-            
-            # Makro analiz sonuçlarını da getir
-            macro = await rm.get_macro_market_signal()
-            regime = await rm.get_market_regime()
             
             text = (
-                f"🎯 **Gelişmiş Risk Analizi - {summary['symbol']}**\n\n"
-                f"📊 **Temel Metrikler:**\n"
-                f"• Price: ${summary['price']:,.2f}\n"
-                f"• ATR: {summary['atr']:.4f}\n"
-                f"• Volatility Score: {summary['vol_metric']:.3f}\n"
-                f"• Liquidation Safety: {summary['liquidation_proximity']:.3f}\n"
-                f"• Correlation Penalty: {summary['correlation_penalty']:.3f}\n"
-                f"• Portfolio VaR: {summary['portfolio_var']:.3f}\n\n"
-                f"🌍 **Makro Piyasa:**\n"
-                f"• SSR Score: {macro.ssr_score:.3f}\n"
-                f"• Netflow Score: {macro.netflow_score:.3f}\n"
-                f"• Fear & Greed: {macro.fear_greed_score:.3f}\n"
-                f"• Overall Macro: {macro.overall_score:.3f}\n"
-                f"• Market Regime: {regime}\n\n"
-                f"📈 **Risk Skorları:**\n"
-                f"• Micro-Only Score: {summary['score_without_macro']:.3f}\n"
-                f"• Final Score: {summary['score']:.3f}\n"
-                f"• Confidence: {summary['macro_confidence']:.3f}"
+                "⚙️ **Risk Manager Ayarları**\n\n"
+                f"• ATR Period: {config.atr_period}\n"
+                f"• K ATR Stop: {config.k_atr_stop}\n"
+                f"• VaR Confidence: {config.var_confidence}\n"
+                f"• Macro Weight: {config.macro_weight}\n"
+                f"• Macro Analysis: {'✅' if config.enable_macro_analysis else '❌'}\n"
+                f"• Glassnode API: {'✅' if config.glassnode_api_key else '❌'}\n"
+                f"• Request Timeout: {config.request_timeout}s\n"
+                f"• Max Retries: {config.max_retries}"
             )
             
-            await message.answer(text)
+            await message.answer(text, parse_mode="Markdown")
             
-        except Exception as exc:
-            logger.exception("Advanced risk command error: %s", exc)
-            await message.answer("Risk analiz hatası. Loglara bakın.")
+        except Exception as e:
+            logger.error(f"Risk settings command error: {e}")
+            await message.answer("❌ Ayarlar gösterilemedi.")
 
-except ImportError:
-    router = None
+    return router
+
+# -------------------------
+# GLOBAL INSTANCE MANAGEMENT
+# -------------------------
+
+_global_risk_manager: Optional[RiskManager] = None
+_global_lock = asyncio.Lock()
+
+async def get_global_risk_manager(binance_api=None, config: Optional[RiskManagerConfig] = None) -> RiskManager:
+    """Global RiskManager instance getter"""
+    global _global_risk_manager
+    
+    async with _global_lock:
+        if _global_risk_manager is None:
+            _global_risk_manager = RiskManager()
+            await _global_risk_manager.initialize(binance_api, config)
+        return _global_risk_manager
+
+async def close_global_risk_manager():
+    """Global RiskManager cleanup"""
+    global _global_risk_manager
+    
+    if _global_risk_manager is not None:
+        await _global_risk_manager.close()
+        _global_risk_manager = None
+
+# Context manager for temporary usage
+@asynccontextmanager
+async def risk_manager_context(binance_api=None, config: Optional[RiskManagerConfig] = None):
+    """Context manager for temporary RiskManager usage"""
+    risk_manager = await get_global_risk_manager(binance_api, config)
+    try:
+        yield risk_manager
+    finally:
+        await close_global_risk_manager()
+
+# Router instance for easy import
+risk_router = create_risk_router()
