@@ -6,6 +6,10 @@ class BinanceError(Exception):
     """Base exception for all Binance API errors."""
     pass
 
+class BinanceConfigError(BinanceError):
+    """Config hatası için özel sınıf"""
+    pass
+
 
 class BinanceAPIError(BinanceError):
     """Exception raised for API-related errors."""
@@ -52,6 +56,11 @@ class BinanceWebSocketError(BinanceError):
 
 class BinanceRateLimitError(BinanceAPIError):
     """Exception raised for rate limit errors."""
+    pass
+
+
+class BinancePortfolioError(BinanceAPIError):
+    """Portfolio işlemleri için özel hata sınıfı"""
     pass
 
 
